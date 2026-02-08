@@ -1,13 +1,15 @@
 # REG-124: Language Selection for Grafema Core
 
 **Status:** Research complete
-**Decision:** Rust — but the real win is architecture, not language
+**Decision:** Rust long-term, but the immediate win is **batching IPC calls** (no rewrite needed)
 
 ## TL;DR
 
-We profiled Grafema on a real project (Jammers, 153 files). The bottleneck is not code expressiveness or parsing speed — it's **IPC overhead between TypeScript core and Rust RFDB server**. 96.7% of analysis time is spent on serialization + unix socket communication for ~47K graph operations.
+We profiled Grafema on a real project (Jammers, 153 files). The bottleneck is **N+1 IPC calls** — plugins call `addNode()`/`addEdge()` one-at-a-time in loops instead of batching. GraphBuilder (which already batches) takes 1.3s for 12K nodes. All other plugins take 84.8s for the rest.
 
-**The question changed** from "which language is more expressive?" to "how do we eliminate IPC overhead?"
+**The fix is trivial:** buffer nodes/edges, flush once per plugin. No language change needed for 10-17x speedup.
+
+**Long-term:** Rust migration still justified for token economy (58% less code = 2x more context for AI agents) and eventual IPC elimination via in-process graph.
 
 ## Profiling Data (Jammers, 153 files)
 
@@ -134,26 +136,44 @@ Rust Core (single process)
 
 ## Next Steps
 
-### Step 1: Eliminate IPC (highest ROI, no rewrite needed)
+### Step 1: Batch IPC calls (REG-388 — highest ROI, trivial fix)
 
-Before rewriting anything, test an **in-process RFDB** approach:
-- Embed RFDB as a Rust library (not separate server)
-- Call from TypeScript via napi-rs (Node.js native addon)
-- Zero serialization for batch operations (pass buffers)
+35 files, 112 call sites use singular `addNode()`/`addEdge()` in loops.
+GraphBuilder already demonstrates the pattern — other plugins just need to follow it.
 
-This could give 5-10x speedup on ANALYSIS with minimal code changes.
+```typescript
+// Before: N+1 IPC calls
+for (const endpoint of endpoints) {
+  await graph.addNode(endpoint);   // IPC call #1
+  await graph.addEdge({ ... });    // IPC call #2
+}
 
-### Step 2: Incremental Rust migration
+// After: 2 IPC calls total
+const nodes = [], edges = [];
+for (const endpoint of endpoints) {
+  nodes.push(endpoint);
+  edges.push({ ... });
+}
+await graph.addNodes(nodes);
+await graph.addEdges(edges);
+```
 
-If Step 1 confirms the hypothesis:
-1. Move node type definitions to Rust (ADTs, derive macros)
+Expected: ANALYSIS 87s → 5-10s. No architecture changes.
+
+### Step 2: Incremental Rust migration (long-term, for token economy)
+
+After batching proves the IPC hypothesis:
+1. Move node type definitions to Rust ADTs (58% less code = fewer tokens)
 2. Move AST analysis to Rust + Swc
 3. Move enrichers to Rust
 4. Keep CLI/MCP/plugins in TypeScript
 
+Note: napi-rs was rejected because it blocks parallel analysis.
+Future in-process approach would need to preserve multi-worker architecture.
+
 ### Step 3: Evaluate results
 
-After Step 1+2, re-profile. If analysis drops from 100s to 10s, the migration is justified. If not, reconsider.
+After Step 1, re-profile. If analysis drops to <10s, Step 2 becomes about token economy, not performance.
 
 ## Research Artifacts
 
