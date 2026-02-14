@@ -36,7 +36,7 @@ This document tracks which JavaScript/TypeScript AST nodes are handled by Navi's
 | `AssignmentExpression` | Handled | ASSIGNED_FROM edge | Variable tracking |
 | `UpdateExpression` | Handled | MODIFIES edge | i++, --count |
 | `AwaitExpression` | Partial | Marks async | Parent function async |
-| `YieldExpression` | Partial | Marks generator | Parent function generator |
+| `YieldExpression` | Handled | YIELDS/DELEGATES_TO edges | Generator data flow tracking (REG-270) |
 | `BinaryExpression` | Not Handled | - | Could track operations |
 | `UnaryExpression` | Not Handled | - | typeof, !, - |
 | `LogicalExpression` | Not Handled | - | &&, \|\|, ?? |
