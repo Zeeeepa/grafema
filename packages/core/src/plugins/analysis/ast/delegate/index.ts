@@ -4,3 +4,4 @@ export { ObjectMutationProcessor } from './ObjectMutationProcessor.js';
 export { VariableTrackingProcessor } from './VariableTrackingProcessor.js';
 export { ControlFlowProcessor } from './ControlFlowProcessor.js';
 export { CallExpressionProcessor } from './CallExpressionProcessor.js';
+export { ErrorTrackingProcessor } from './ErrorTrackingProcessor.js';
