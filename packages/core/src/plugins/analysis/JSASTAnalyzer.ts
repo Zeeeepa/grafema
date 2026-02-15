@@ -111,6 +111,7 @@ import { extractNamesFromPattern } from './ast/utils/extractNamesFromPattern.js'
 import { memberExpressionToString } from './ast/utils/memberExpressionToString.js';
 import { countLogicalOperators } from './ast/utils/countLogicalOperators.js';
 import { extractDiscriminantExpression } from './ast/utils/extractDiscriminantExpression.js';
+import { generateSemanticId, generateAnonymousName } from './ast/utils/generateSemanticId.js';
 import { createFunctionBodyContext } from './ast/FunctionBodyContext.js';
 import type { FunctionBodyContext } from './ast/FunctionBodyContext.js';
 import {
@@ -1229,29 +1230,14 @@ export class JSASTAnalyzer extends Plugin {
     return { nodes: nodesCreated, edges: edgesCreated };
   }
 
-  /**
-   * Helper to generate semantic ID for a scope using ScopeTracker.
-   * Format: "scopePath:scopeType[index]" e.g. "MyClass->myMethod:if_statement[0]"
-   */
-  private generateSemanticId(
-    scopeType: string,
-    scopeTracker: ScopeTracker | undefined
-  ): string | undefined {
-    if (!scopeTracker) return undefined;
-
-    const scopePath = scopeTracker.getScopePath();
-    const siblingIndex = scopeTracker.getItemCounter(`semanticId:${scopeType}`);
-    return `${scopePath}:${scopeType}[${siblingIndex}]`;
+  /** Delegates to generateSemanticId util (REG-460 Phase 9) */
+  private generateSemanticId(scopeType: string, scopeTracker: ScopeTracker | undefined): string | undefined {
+    return generateSemanticId(scopeType, scopeTracker);
   }
 
-  /**
-   * Generate a unique anonymous function name within the current scope.
-   * Uses ScopeTracker.getSiblingIndex() for stable naming.
-   */
+  /** Delegates to generateAnonymousName util (REG-460 Phase 9) */
   private generateAnonymousName(scopeTracker: ScopeTracker | undefined): string {
-    if (!scopeTracker) return 'anonymous';
-    const index = scopeTracker.getSiblingIndex('anonymous');
-    return `anonymous[${index}]`;
+    return generateAnonymousName(scopeTracker);
   }
 
   /**
