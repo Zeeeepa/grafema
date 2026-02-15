@@ -57,7 +57,6 @@ import { computeSemanticId } from '../../core/SemanticId.js';
 import { ExpressionNode } from '../../core/nodes/ExpressionNode.js';
 import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
 import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
-import { ArrayLiteralNode } from '../../core/nodes/ArrayLiteralNode.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
 import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
@@ -96,9 +95,7 @@ import type {
   ArrayLiteralInfo,
   ArrayElementInfo,
   ArrayMutationInfo,
-  ArrayMutationArgument,
   ObjectMutationInfo,
-  ObjectMutationValue,
   VariableReassignmentInfo,
   ReturnStatementInfo,
   YieldExpressionInfo,
@@ -136,6 +133,11 @@ import {
 } from './ast/handlers/index.js';
 import type { AnalyzerDelegate } from './ast/handlers/index.js';
 import type { FunctionBodyHandler } from './ast/handlers/index.js';
+import {
+  VariableMutationProcessor,
+  ArrayMutationProcessor,
+  ObjectMutationProcessor,
+} from './ast/delegate/index.js';
 
 // === LOCAL TYPES ===
 
@@ -247,6 +249,9 @@ export class JSASTAnalyzer extends Plugin {
   private graphBuilder: GraphBuilder;
   private analyzedModules: Set<string>;
   private profiler: Profiler;
+  private variableMutationProcessor = new VariableMutationProcessor();
+  private arrayMutationProcessor = new ArrayMutationProcessor();
+  private objectMutationProcessor = new ObjectMutationProcessor();
 
   constructor() {
     super();
@@ -3216,22 +3221,6 @@ export class JSASTAnalyzer extends Plugin {
     });
   }
 
-  /**
-   * Detect array mutation calls (push, unshift, splice) inside functions
-   * and collect mutation info for FLOWS_INTO edge creation in GraphBuilder
-   *
-   * REG-117: Added isNested, baseObjectName, propertyName for nested mutations
-   *
-   * @param callNode - The call expression node
-   * @param arrayName - Name of the array being mutated
-   * @param method - The mutation method (push, unshift, splice)
-   * @param module - Current module being analyzed
-   * @param arrayMutations - Collection to push mutation info into
-   * @param scopeTracker - Optional scope tracker for semantic IDs
-   * @param isNested - REG-117: true if this is a nested mutation (obj.arr.push)
-   * @param baseObjectName - REG-117: base object name for nested mutations
-   * @param propertyName - REG-117: property name for nested mutations
-   */
   private detectArrayMutationInFunction(
     callNode: t.CallExpression,
     arrayName: string,
@@ -3243,86 +3232,9 @@ export class JSASTAnalyzer extends Plugin {
     baseObjectName?: string,
     propertyName?: string
   ): void {
-    const mutationArgs: ArrayMutationArgument[] = [];
-
-    // For splice, only arguments from index 2 onwards are insertions
-    // splice(start, deleteCount, item1, item2, ...)
-    callNode.arguments.forEach((arg, index) => {
-      // Skip start and deleteCount for splice
-      if (method === 'splice' && index < 2) return;
-
-      const argInfo: ArrayMutationArgument = {
-        argIndex: method === 'splice' ? index - 2 : index,
-        isSpread: arg.type === 'SpreadElement',
-        valueType: 'EXPRESSION'  // Default
-      };
-
-      let actualArg: t.Node = arg;
-      if (arg.type === 'SpreadElement') {
-        actualArg = arg.argument;
-      }
-
-      // Determine value type
-      const literalValue = ExpressionEvaluator.extractLiteralValue(actualArg);
-      if (literalValue !== null) {
-        argInfo.valueType = 'LITERAL';
-        argInfo.literalValue = literalValue;
-      } else if (actualArg.type === 'Identifier') {
-        argInfo.valueType = 'VARIABLE';
-        argInfo.valueName = actualArg.name;
-      } else if (actualArg.type === 'ObjectExpression') {
-        argInfo.valueType = 'OBJECT_LITERAL';
-      } else if (actualArg.type === 'ArrayExpression') {
-        argInfo.valueType = 'ARRAY_LITERAL';
-      } else if (actualArg.type === 'CallExpression') {
-        argInfo.valueType = 'CALL';
-        argInfo.callLine = actualArg.loc?.start.line;
-        argInfo.callColumn = actualArg.loc?.start.column;
-      }
-
-      mutationArgs.push(argInfo);
-    });
-
-    // Only record if there are actual insertions
-    if (mutationArgs.length > 0) {
-      const line = callNode.loc?.start.line ?? 0;
-      const column = callNode.loc?.start.column ?? 0;
-
-      // Generate semantic ID for array mutation if scopeTracker available
-      let mutationId: string | undefined;
-      if (scopeTracker) {
-        const discriminator = scopeTracker.getItemCounter(`ARRAY_MUTATION:${arrayName}.${method}`);
-        mutationId = computeSemanticId('ARRAY_MUTATION', `${arrayName}.${method}`, scopeTracker.getContext(), { discriminator });
-      }
-
-      arrayMutations.push({
-        id: mutationId,
-        arrayName,
-        mutationMethod: method,
-        file: module.file,
-        line,
-        column,
-        insertedValues: mutationArgs,
-        // REG-117: Nested mutation fields
-        isNested,
-        baseObjectName,
-        propertyName
-      });
-    }
+    this.arrayMutationProcessor.detectArrayMutationInFunction(callNode, arrayName, method, module, arrayMutations, scopeTracker, isNested, baseObjectName, propertyName);
   }
 
-  /**
-   * Detect indexed array assignment: arr[i] = value
-   * Creates ArrayMutationInfo for FLOWS_INTO edge generation in GraphBuilder.
-   * For non-variable values (LITERAL, OBJECT_LITERAL, ARRAY_LITERAL), creates
-   * value nodes and sets valueNodeId so GraphBuilder can create FLOWS_INTO edges.
-   *
-   * @param assignNode - The assignment expression node
-   * @param module - Current module being analyzed
-   * @param arrayMutations - Collection to push mutation info into
-   * @param scopeTracker - Scope tracker for semantic ID generation
-   * @param collections - Collections for creating value nodes (literals, objectLiterals, etc.)
-   */
   private detectIndexedArrayAssignment(
     assignNode: t.AssignmentExpression,
     module: VisitorModule,
@@ -3330,236 +3242,18 @@ export class JSASTAnalyzer extends Plugin {
     scopeTracker?: ScopeTracker,
     collections?: VisitorCollections
   ): void {
-    // Check for indexed array assignment: arr[i] = value
-    if (assignNode.left.type === 'MemberExpression' && assignNode.left.computed) {
-      const memberExpr = assignNode.left;
-
-      // Only process NumericLiteral keys - those are clearly array indexed assignments
-      // e.g., arr[0] = value, arr[1] = value
-      // Other computed keys (Identifier, expressions) are ambiguous (could be array or object)
-      // and are handled by detectObjectPropertyAssignment as computed mutations
-      if (memberExpr.property.type !== 'NumericLiteral') {
-        return;
-      }
-
-      // Get array name (only simple identifiers for now)
-      if (memberExpr.object.type === 'Identifier') {
-        const arrayName = memberExpr.object.name;
-        const value = assignNode.right;
-
-        // Use defensive loc checks instead of ! assertions
-        const line = assignNode.loc?.start.line ?? 0;
-        const column = assignNode.loc?.start.column ?? 0;
-
-        const argInfo: ArrayMutationArgument = {
-          argIndex: 0,
-          isSpread: false,
-          valueType: 'EXPRESSION'
-        };
-
-        // Determine value type and create value nodes for non-variable types
-        // IMPORTANT: Check ObjectExpression/ArrayExpression BEFORE extractLiteralValue
-        // to match the order in detectArrayMutation and extractArguments (REG-396).
-        // extractLiteralValue returns objects/arrays with all-literal properties as
-        // literal values, but we want OBJECT_LITERAL/ARRAY_LITERAL nodes instead.
-        if (value.type === 'ObjectExpression') {
-          argInfo.valueType = 'OBJECT_LITERAL';
-          const valueLine = value.loc?.start.line ?? line;
-          const valueColumn = value.loc?.start.column ?? column;
-          // Create OBJECT_LITERAL node if collections available
-          if (collections?.objectLiteralCounterRef) {
-            if (!collections.objectLiterals) collections.objectLiterals = [];
-            const objectLiteralCounterRef = collections.objectLiteralCounterRef as CounterRef;
-            const objectNode = ObjectLiteralNode.create(
-              module.file, valueLine, valueColumn,
-              { counter: objectLiteralCounterRef.value++ }
-            );
-            (collections.objectLiterals as ObjectLiteralInfo[]).push(objectNode as unknown as ObjectLiteralInfo);
-            argInfo.valueNodeId = objectNode.id;
-          }
-        } else if (value.type === 'ArrayExpression') {
-          argInfo.valueType = 'ARRAY_LITERAL';
-          const valueLine = value.loc?.start.line ?? line;
-          const valueColumn = value.loc?.start.column ?? column;
-          // Create ARRAY_LITERAL node if collections available
-          if (collections?.arrayLiteralCounterRef) {
-            if (!collections.arrayLiterals) collections.arrayLiterals = [];
-            const arrayLiteralCounterRef = collections.arrayLiteralCounterRef as CounterRef;
-            const arrayNode = ArrayLiteralNode.create(
-              module.file, valueLine, valueColumn,
-              { counter: arrayLiteralCounterRef.value++ }
-            );
-            (collections.arrayLiterals as ArrayLiteralInfo[]).push(arrayNode as unknown as ArrayLiteralInfo);
-            argInfo.valueNodeId = arrayNode.id;
-          }
-        } else if (value.type === 'Identifier') {
-          argInfo.valueType = 'VARIABLE';
-          argInfo.valueName = value.name;
-        } else if (value.type === 'CallExpression') {
-          argInfo.valueType = 'CALL';
-          argInfo.callLine = value.loc?.start.line;
-          argInfo.callColumn = value.loc?.start.column;
-        } else {
-          const literalValue = ExpressionEvaluator.extractLiteralValue(value);
-          if (literalValue !== null) {
-            argInfo.valueType = 'LITERAL';
-            argInfo.literalValue = literalValue;
-            const valueLine = value.loc?.start.line ?? line;
-            const valueColumn = value.loc?.start.column ?? column;
-            // Create LITERAL node if collections available
-            if (collections?.literals && collections.literalCounterRef) {
-              const literalCounterRef = collections.literalCounterRef as CounterRef;
-              const literalId = `LITERAL#indexed#${module.file}#${valueLine}:${valueColumn}:${literalCounterRef.value++}`;
-              (collections.literals as LiteralInfo[]).push({
-                id: literalId,
-                type: 'LITERAL',
-                value: literalValue,
-                valueType: typeof literalValue,
-                file: module.file,
-                line: valueLine,
-                column: valueColumn,
-                parentCallId: undefined,
-                argIndex: 0
-              } as LiteralInfo);
-              argInfo.valueNodeId = literalId;
-            }
-          }
-        }
-
-        // Capture scope path for scope-aware lookup (REG-309)
-        const scopePath = scopeTracker?.getContext().scopePath ?? [];
-
-        arrayMutations.push({
-          arrayName,
-          mutationScopePath: scopePath,
-          mutationMethod: 'indexed',
-          file: module.file,
-          line: line,
-          column: column,
-          insertedValues: [argInfo]
-        });
-      }
-    }
+    this.arrayMutationProcessor.detectIndexedArrayAssignment(assignNode, module, arrayMutations, scopeTracker, collections);
   }
 
-  /**
-   * Detect object property assignment: obj.prop = value, obj['prop'] = value
-   * Creates ObjectMutationInfo for FLOWS_INTO edge generation in GraphBuilder
-   *
-   * @param assignNode - The assignment expression node
-   * @param module - Current module being analyzed
-   * @param objectMutations - Collection to push mutation info into
-   * @param scopeTracker - Optional scope tracker for semantic IDs
-   */
   private detectObjectPropertyAssignment(
     assignNode: t.AssignmentExpression,
     module: VisitorModule,
     objectMutations: ObjectMutationInfo[],
     scopeTracker?: ScopeTracker
   ): void {
-    // Check for property assignment: obj.prop = value or obj['prop'] = value
-    if (assignNode.left.type !== 'MemberExpression') return;
-
-    const memberExpr = assignNode.left;
-
-    // Skip NumericLiteral indexed assignment (handled by array mutation handler)
-    // Array mutation handler processes: arr[0] (numeric literal index)
-    // Object mutation handler processes: obj.prop, obj['prop'], obj[key], obj[expr]
-    if (memberExpr.computed && memberExpr.property.type === 'NumericLiteral') {
-      return; // Let array mutation handler deal with this
-    }
-
-    // Get object name and enclosing class context for 'this'
-    let objectName: string;
-    let enclosingClassName: string | undefined;
-
-    if (memberExpr.object.type === 'Identifier') {
-      objectName = memberExpr.object.name;
-    } else if (memberExpr.object.type === 'ThisExpression') {
-      objectName = 'this';
-      // REG-152: Extract enclosing class name from scope context
-      if (scopeTracker) {
-        enclosingClassName = scopeTracker.getEnclosingScope('CLASS');
-      }
-    } else {
-      // Complex expressions like obj.nested.prop = value
-      // For now, skip these (documented limitation)
-      return;
-    }
-
-    // Get property name
-    let propertyName: string;
-    let mutationType: 'property' | 'computed';
-    let computedPropertyVar: string | undefined;
-
-    if (!memberExpr.computed) {
-      // obj.prop
-      if (memberExpr.property.type === 'Identifier') {
-        propertyName = memberExpr.property.name;
-        mutationType = 'property';
-      } else {
-        return; // Unexpected property type
-      }
-    } else {
-      // obj['prop'] or obj[key]
-      if (memberExpr.property.type === 'StringLiteral') {
-        propertyName = memberExpr.property.value;
-        mutationType = 'property'; // String literal is effectively a property name
-      } else {
-        propertyName = '<computed>';
-        mutationType = 'computed';
-        // Capture variable name for later resolution in enrichment phase
-        if (memberExpr.property.type === 'Identifier') {
-          computedPropertyVar = memberExpr.property.name;
-        }
-      }
-    }
-
-    // Extract value info
-    const value = assignNode.right;
-    const valueInfo = this.extractMutationValue(value);
-
-    // Use defensive loc checks
-    const line = assignNode.loc?.start.line ?? 0;
-    const column = assignNode.loc?.start.column ?? 0;
-
-    // Capture scope path for scope-aware lookup (REG-309)
-    const scopePath = scopeTracker?.getContext().scopePath ?? [];
-
-    // Generate semantic ID if scopeTracker available
-    let mutationId: string | undefined;
-    if (scopeTracker) {
-      const discriminator = scopeTracker.getItemCounter(`OBJECT_MUTATION:${objectName}.${propertyName}`);
-      mutationId = computeSemanticId('OBJECT_MUTATION', `${objectName}.${propertyName}`, scopeTracker.getContext(), { discriminator });
-    }
-
-    objectMutations.push({
-      id: mutationId,
-      objectName,
-      mutationScopePath: scopePath,
-      enclosingClassName,  // REG-152: Class name for 'this' mutations
-      propertyName,
-      mutationType,
-      computedPropertyVar,
-      file: module.file,
-      line,
-      column,
-      value: valueInfo
-    });
+    this.objectMutationProcessor.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker);
   }
 
-  /**
-   * Collect update expression info for graph building (i++, obj.prop++, arr[i]++).
-   *
-   * REG-288: Simple identifiers (i++, --count)
-   * REG-312: Member expressions (obj.prop++, arr[i]++, this.count++)
-   *
-   * Creates UpdateExpressionInfo entries that GraphBuilder uses to create:
-   * - UPDATE_EXPRESSION nodes
-   * - MODIFIES edges to target variables/objects
-   * - READS_FROM self-loops
-   * - CONTAINS edges for scope hierarchy
-   */
   private collectUpdateExpression(
     updateNode: t.UpdateExpression,
     module: VisitorModule,
@@ -3567,329 +3261,24 @@ export class JSASTAnalyzer extends Plugin {
     parentScopeId: string | undefined,
     scopeTracker?: ScopeTracker
   ): void {
-    const operator = updateNode.operator as '++' | '--';
-    const prefix = updateNode.prefix;
-    const line = getLine(updateNode);
-    const column = getColumn(updateNode);
-
-    // CASE 1: Simple identifier (i++, --count) - REG-288 behavior
-    if (updateNode.argument.type === 'Identifier') {
-      const variableName = updateNode.argument.name;
-
-      updateExpressions.push({
-        targetType: 'IDENTIFIER',
-        variableName,
-        variableLine: getLine(updateNode.argument),
-        operator,
-        prefix,
-        file: module.file,
-        line,
-        column,
-        parentScopeId
-      });
-      return;
-    }
-
-    // CASE 2: Member expression (obj.prop++, arr[i]++) - REG-312 new
-    if (updateNode.argument.type === 'MemberExpression') {
-      const memberExpr = updateNode.argument;
-
-      // Extract object name (reuses detectObjectPropertyAssignment pattern)
-      let objectName: string;
-      let enclosingClassName: string | undefined;
-
-      if (memberExpr.object.type === 'Identifier') {
-        objectName = memberExpr.object.name;
-      } else if (memberExpr.object.type === 'ThisExpression') {
-        objectName = 'this';
-        // REG-152: Extract enclosing class name from scope context
-        if (scopeTracker) {
-          enclosingClassName = scopeTracker.getEnclosingScope('CLASS');
-        }
-      } else {
-        // Complex expressions: obj.nested.prop++, (obj || fallback).count++
-        // Skip for now (documented limitation, same as detectObjectPropertyAssignment)
-        return;
-      }
-
-      // Extract property name (reuses detectObjectPropertyAssignment pattern)
-      let propertyName: string;
-      let mutationType: 'property' | 'computed';
-      let computedPropertyVar: string | undefined;
-
-      if (!memberExpr.computed) {
-        // obj.prop++
-        if (memberExpr.property.type === 'Identifier') {
-          propertyName = memberExpr.property.name;
-          mutationType = 'property';
-        } else {
-          return; // Unexpected property type
-        }
-      } else {
-        // obj['prop']++ or obj[key]++
-        if (memberExpr.property.type === 'StringLiteral') {
-          // obj['prop']++ - static string
-          propertyName = memberExpr.property.value;
-          mutationType = 'property';
-        } else {
-          // obj[key]++, arr[i]++ - computed property
-          propertyName = '<computed>';
-          mutationType = 'computed';
-          if (memberExpr.property.type === 'Identifier') {
-            computedPropertyVar = memberExpr.property.name;
-          }
-        }
-      }
-
-      updateExpressions.push({
-        targetType: 'MEMBER_EXPRESSION',
-        objectName,
-        objectLine: getLine(memberExpr.object),
-        enclosingClassName,
-        propertyName,
-        mutationType,
-        computedPropertyVar,
-        operator,
-        prefix,
-        file: module.file,
-        line,
-        column,
-        parentScopeId
-      });
-    }
+    this.variableMutationProcessor.collectUpdateExpression(updateNode, module, updateExpressions, parentScopeId, scopeTracker);
   }
 
-  /**
-   * Detect variable reassignment for FLOWS_INTO edge creation.
-   * Handles all assignment operators: =, +=, -=, *=, /=, etc.
-   *
-   * Captures COMPLETE metadata for:
-   * - LITERAL values (literalValue field)
-   * - EXPRESSION nodes (expressionType, expressionMetadata fields)
-   * - VARIABLE, CALL_SITE, METHOD_CALL references
-   *
-   * REG-290: No deferred functionality - all value types captured.
-   */
   private detectVariableReassignment(
     assignNode: t.AssignmentExpression,
     module: VisitorModule,
     variableReassignments: VariableReassignmentInfo[],
     scopeTracker?: ScopeTracker
   ): void {
-    // LHS must be simple identifier (checked by caller)
-    const leftId = assignNode.left as t.Identifier;
-    const variableName = leftId.name;
-    const operator = assignNode.operator;  // '=', '+=', '-=', etc.
-
-    // Get RHS value info
-    const rightExpr = assignNode.right;
-    const line = getLine(assignNode);
-    const column = getColumn(assignNode);
-
-    // Extract value source (similar to VariableVisitor pattern)
-    let valueType: 'VARIABLE' | 'CALL_SITE' | 'METHOD_CALL' | 'LITERAL' | 'EXPRESSION';
-    let valueName: string | undefined;
-    let valueId: string | null = null;
-    let callLine: number | undefined;
-    let callColumn: number | undefined;
-
-    // Complete metadata for node creation
-    let literalValue: unknown;
-    let expressionType: string | undefined;
-    let expressionMetadata: VariableReassignmentInfo['expressionMetadata'];
-
-    // 1. Literal value
-    const extractedLiteralValue = ExpressionEvaluator.extractLiteralValue(rightExpr);
-    if (extractedLiteralValue !== null) {
-      valueType = 'LITERAL';
-      valueId = `LITERAL#${line}:${rightExpr.start}#${module.file}`;
-      literalValue = extractedLiteralValue;  // Store for GraphBuilder
-    }
-    // 2. Simple identifier (variable reference)
-    else if (rightExpr.type === 'Identifier') {
-      valueType = 'VARIABLE';
-      valueName = rightExpr.name;
-    }
-    // 3. CallExpression (function call)
-    else if (rightExpr.type === 'CallExpression' && rightExpr.callee.type === 'Identifier') {
-      valueType = 'CALL_SITE';
-      valueName = rightExpr.callee.name;
-      callLine = getLine(rightExpr);
-      callColumn = getColumn(rightExpr);
-    }
-    // 4. MemberExpression (method call: obj.method())
-    else if (rightExpr.type === 'CallExpression' && rightExpr.callee.type === 'MemberExpression') {
-      valueType = 'METHOD_CALL';
-      callLine = getLine(rightExpr);
-      callColumn = getColumn(rightExpr);
-    }
-    // 5. Everything else is EXPRESSION
-    else {
-      valueType = 'EXPRESSION';
-      expressionType = rightExpr.type;  // Store AST node type
-      // Use correct EXPRESSION ID format: {file}:EXPRESSION:{type}:{line}:{column}
-      valueId = `${module.file}:EXPRESSION:${expressionType}:${line}:${column}`;
-
-      // Extract type-specific metadata (matches VariableAssignmentInfo pattern)
-      expressionMetadata = {};
-
-      // MemberExpression: obj.prop or obj[key]
-      if (rightExpr.type === 'MemberExpression') {
-        const objName = rightExpr.object.type === 'Identifier' ? rightExpr.object.name : undefined;
-        const propName = rightExpr.property.type === 'Identifier' ? rightExpr.property.name : undefined;
-        const computed = rightExpr.computed;
-
-        expressionMetadata.object = objName;
-        expressionMetadata.property = propName;
-        expressionMetadata.computed = computed;
-
-        // Computed property variable: obj[varName]
-        if (computed && rightExpr.property.type === 'Identifier') {
-          expressionMetadata.computedPropertyVar = rightExpr.property.name;
-        }
-      }
-      // BinaryExpression: a + b, a - b, etc.
-      else if (rightExpr.type === 'BinaryExpression' || rightExpr.type === 'LogicalExpression') {
-        expressionMetadata.operator = rightExpr.operator;
-        expressionMetadata.leftSourceName = rightExpr.left.type === 'Identifier' ? rightExpr.left.name : undefined;
-        expressionMetadata.rightSourceName = rightExpr.right.type === 'Identifier' ? rightExpr.right.name : undefined;
-      }
-      // ConditionalExpression: condition ? a : b
-      else if (rightExpr.type === 'ConditionalExpression') {
-        expressionMetadata.consequentSourceName = rightExpr.consequent.type === 'Identifier' ? rightExpr.consequent.name : undefined;
-        expressionMetadata.alternateSourceName = rightExpr.alternate.type === 'Identifier' ? rightExpr.alternate.name : undefined;
-      }
-      // Add more expression types as needed
-    }
-
-    // Capture scope path for scope-aware lookup (REG-309)
-    const scopePath = scopeTracker?.getContext().scopePath ?? [];
-
-    // Push reassignment info to collection
-    variableReassignments.push({
-      variableName,
-      variableLine: getLine(leftId),
-      mutationScopePath: scopePath,
-      valueType,
-      valueName,
-      valueId,
-      callLine,
-      callColumn,
-      operator,
-      // Complete metadata
-      literalValue,
-      expressionType,
-      expressionMetadata,
-      file: module.file,
-      line,
-      column
-    });
+    this.variableMutationProcessor.detectVariableReassignment(assignNode, module, variableReassignments, scopeTracker);
   }
 
-  /**
-   * Extract value information from an expression for mutation tracking
-   */
-  private extractMutationValue(value: t.Expression): ObjectMutationValue {
-    const valueInfo: ObjectMutationValue = {
-      valueType: 'EXPRESSION'  // Default
-    };
-
-    const literalValue = ExpressionEvaluator.extractLiteralValue(value);
-    if (literalValue !== null) {
-      valueInfo.valueType = 'LITERAL';
-      valueInfo.literalValue = literalValue;
-    } else if (value.type === 'Identifier') {
-      valueInfo.valueType = 'VARIABLE';
-      valueInfo.valueName = value.name;
-    } else if (value.type === 'ObjectExpression') {
-      valueInfo.valueType = 'OBJECT_LITERAL';
-    } else if (value.type === 'ArrayExpression') {
-      valueInfo.valueType = 'ARRAY_LITERAL';
-    } else if (value.type === 'CallExpression') {
-      valueInfo.valueType = 'CALL';
-      valueInfo.callLine = value.loc?.start.line;
-      valueInfo.callColumn = value.loc?.start.column;
-    }
-
-    return valueInfo;
-  }
-
-  /**
-   * Detect Object.assign() calls inside functions
-   * Creates ObjectMutationInfo for FLOWS_INTO edge generation in GraphBuilder
-   */
   private detectObjectAssignInFunction(
     callNode: t.CallExpression,
     module: VisitorModule,
     objectMutations: ObjectMutationInfo[],
     scopeTracker?: ScopeTracker
   ): void {
-    // Need at least 2 arguments: target and at least one source
-    if (callNode.arguments.length < 2) return;
-
-    // First argument is target
-    const targetArg = callNode.arguments[0];
-    let targetName: string;
-
-    if (targetArg.type === 'Identifier') {
-      targetName = targetArg.name;
-    } else if (targetArg.type === 'ObjectExpression') {
-      targetName = '<anonymous>';
-    } else {
-      return;
-    }
-
-    const line = callNode.loc?.start.line ?? 0;
-    const column = callNode.loc?.start.column ?? 0;
-
-    for (let i = 1; i < callNode.arguments.length; i++) {
-      let arg = callNode.arguments[i];
-      let isSpread = false;
-
-      if (arg.type === 'SpreadElement') {
-        isSpread = true;
-        arg = arg.argument;
-      }
-
-      const valueInfo: ObjectMutationValue = {
-        valueType: 'EXPRESSION',
-        argIndex: i - 1,
-        isSpread
-      };
-
-      const literalValue = ExpressionEvaluator.extractLiteralValue(arg);
-      if (literalValue !== null) {
-        valueInfo.valueType = 'LITERAL';
-        valueInfo.literalValue = literalValue;
-      } else if (arg.type === 'Identifier') {
-        valueInfo.valueType = 'VARIABLE';
-        valueInfo.valueName = arg.name;
-      } else if (arg.type === 'ObjectExpression') {
-        valueInfo.valueType = 'OBJECT_LITERAL';
-      } else if (arg.type === 'ArrayExpression') {
-        valueInfo.valueType = 'ARRAY_LITERAL';
-      } else if (arg.type === 'CallExpression') {
-        valueInfo.valueType = 'CALL';
-        valueInfo.callLine = arg.loc?.start.line;
-        valueInfo.callColumn = arg.loc?.start.column;
-      }
-
-      let mutationId: string | undefined;
-      if (scopeTracker) {
-        const discriminator = scopeTracker.getItemCounter(`OBJECT_MUTATION:Object.assign:${targetName}`);
-        mutationId = computeSemanticId('OBJECT_MUTATION', `Object.assign:${targetName}`, scopeTracker.getContext(), { discriminator });
-      }
-
-      objectMutations.push({
-        id: mutationId,
-        objectName: targetName,
-        propertyName: '<assign>',
-        mutationType: 'assign',
-        file: module.file,
-        line,
-        column,
-        value: valueInfo
-      });
-    }
+    this.objectMutationProcessor.detectObjectAssignInFunction(callNode, module, objectMutations, scopeTracker);
   }
 }
