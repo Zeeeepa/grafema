@@ -92,22 +92,11 @@ MCP server configured in `.mcp.json` — provides 25 tools for graph queries. Re
 
 ### Workflow Integration (Hybrid Mode)
 
-**Don (exploration phase) — MUST try graph first:**
+**Exploration phase — MUST try graph first.** See `_ai/agents/don.md` for query mapping table.
 
-| Instead of... | Try Grafema MCP first |
-|---------------|----------------------|
-| Glob `**/*.ts` + Read files | `find_nodes` by type/name/file |
-| Grep "functionName" + Read context | `find_calls --name functionName` |
-| Read file to understand dependencies | `trace_dataflow` or `get_file_overview` |
-| Read file to understand structure | `get_file_overview` or `get_function_details` |
-| Multiple Reads to understand impact | `query_graph` with Datalog |
-
-If graph doesn't have the answer → fallback to direct file reads. **Note the gap.**
-
-**Kent/Rob (implementation) — direct file reads OK:**
+**Implementation — direct file reads OK:**
 - Implementation needs exact code, not summaries
 - Graph useful for: finding call sites, checking impact, understanding dependencies
-- But writing code requires reading the actual files
 
 **Auto-Review — use graph for verification:**
 - `get_stats` to check graph health after changes
@@ -152,9 +141,10 @@ Every task metrics report (`0XX-metrics.md`) MUST include a **Grafema Dogfooding
 
 ## Process
 
-**Workflow version: v2.0** (2026-02-15)
+**Workflow version: v2.1** (2026-02-15)
 
 Changelog:
+- **v2.1** — Extracted agent instructions to `_ai/agents/`, added Don Scope Integrity rule, reduced CLAUDE.md by ~21%.
 - **v2.0** — Streamlined pipeline: removed Kevlin/Donald from standard flow, Joel only for Full MLA, combined Steve+Вадим auto into single Auto-Review, strengthened Uncle Bob (file-level checks), added model assignment table, parallel Kent ∥ Rob, max 3 subagents, per-task metrics tracking.
 - **v1.0** — Original MLA with all personas sequential.
 
@@ -421,147 +411,17 @@ Each `Task` tool call returns `total_tokens`, `tool_uses`, `duration_ms` in its 
 - Write reports to task directory with sequential numbering
 - Never write code at top level — only through designated implementation agents
 
-### For Don Melton (Tech Lead) — Request Quality Gate
+### Agent Configs
 
-**BEFORE planning, check request for red flags. If any found → stop and ask user for clarification.**
+When spawning a subagent, read its config file and include contents in the Task prompt.
 
-| Red Flag | Signal | Action |
-|----------|--------|--------|
-| **Однострочник без контекста** | Request is 1-2 sentences with no examples, no affected files, no acceptance criteria | Ask: "What specific behavior should change? Can you give a before/after example?" |
-| **Предписывает решение вместо проблемы** | Request says "build X", "create Y system", "add Z component" without explaining WHY | Ask: "What problem does this solve? Is there a simpler fix we're missing?" |
-| **Описывает симптом вместо root cause** | Request says "work around X", "handle case when Y breaks", "add fallback for Z" | Ask: "Why does X break? Have we identified the root cause?" |
-
-**If request passes gate** → proceed with exploration and planning as normal.
-
-**Data:** 89% of tasks with clear requests completed without revisions. 11% with red-flag requests required costly replanning (up to 28 report files vs normal 5-8).
-
-### For Kent Beck (Tests)
-- Tests first, always
-- Tests must communicate intent clearly
-- No mocks in production code paths
-- Find existing test patterns and match them
-
-### For Robert Martin (Uncle Bob) — Code Quality
-
-Reviews at TWO levels: **file-level** (structural) and **method-level** (local).
-
-**File-level checks (HARD LIMITS):**
-- File > 500 lines = **MUST split** before implementation. Create tech debt issue if can't split safely.
-- File > 700 lines = **CRITICAL.** Stop everything, discuss with user. This is how 6k-line files happen.
-- Single file doing 3+ unrelated things = **MUST split** (Single Responsibility)
-- Count before implementation: `wc -l` on files Don identified
-
-**Method-level checklist:**
-- Method length (>50 lines = candidate for split)
-- Parameter count (>3 = consider Parameter Object)
-- Nesting depth (>2 levels = consider early return/extract)
-- Duplication (same pattern 3+ times = extract helper)
-- Naming clarity (can you understand without reading body?)
-
-**Output format:**
-```markdown
-## Uncle Bob Review: [file]
-
-**File size:** [N lines] — [OK / MUST SPLIT / CRITICAL]
-**Methods to modify:** [list with line counts]
-
-**File-level:**
-- [Issue or OK]
-
-**Method-level:** [file:method]
-- **Recommendation:** [REFACTOR / SKIP]
-- [Specific actions]
-
-**Risk:** [LOW/MEDIUM/HIGH]
-**Estimated scope:** [lines affected]
-```
-
-**Rules:**
-- Review ALL files Don identified — both file-level and method-level
-- File splits are NON-NEGOTIABLE above 300 lines
-- Propose MINIMAL method changes that improve readability
-- If method risk > benefit → recommend SKIP
-- Never propose architectural changes in PREPARE phase
-- Run on **Sonnet** model
-
-### For Rob Pike (Implementation)
-- Read existing code before writing new code
-- Match project style over personal preferences
-- Clean, correct solution that doesn't create technical debt
-- If tests fail, fix implementation, not tests (unless tests are wrong)
-
-### For Combined Auto-Review (Single Subagent — Sonnet)
-
-**Replaces separate Steve Jobs + Вадим auto-review + Kevlin Henney.** One subagent, one round-trip.
-
-**Runs as subagent. Default stance: critical but fair.**
-
-**Part 1 — Vision & Architecture (Steve's lens):**
-- Does this align with project vision? ("AI should query the graph, not read code")
-- Did we cut corners instead of doing it right?
-- Are there fundamental architectural gaps?
-- Would shipping this embarrass us?
-
-**CRITICAL — Zero Tolerance for "MVP Limitations":**
-- If a "limitation" makes the feature work for <50% of real-world cases → **REJECT**
-- If the limitation is actually an architectural gap → **STOP, don't defer**
-- Root Cause Policy: fix from roots, not symptoms.
-
-**MANDATORY Complexity & Architecture Checklist:**
-
-Before approving ANY plan involving data flow, enrichment, or graph traversal:
-
-1. **Complexity Check**: What's the iteration space?
-   - O(n) over ALL nodes/edges = **RED FLAG, REJECT**
-   - O(n) over all nodes of ONE type = **RED FLAG** (there can be millions)
-   - O(m) over specific SMALL set (e.g., http:request nodes) = OK
-   - Reusing existing iteration (extending current enricher) = BEST
-
-2. **Plugin Architecture**: Does it use existing abstractions?
-   - Forward registration = **GOOD**, backward pattern scanning = **BAD**
-   - Extending existing enricher pass = **BEST** (no extra iteration)
-
-3. **Extensibility**: Adding new framework support requires only new analyzer plugin = **GOOD**
-
-4. **Grafema doesn't brute-force**: If solution scans all nodes looking for patterns, it's WRONG.
-
-**Part 2 — Practical Quality (Вадим's lens):**
-- Does the code actually do what the task requires?
-- Are there edge cases, regressions, or broken assumptions?
-- Is the change minimal and focused — no scope creep?
-- Are tests meaningful (not just "it doesn't crash")?
-
-**Part 3 — Code Quality (Kevlin's lens):**
-- Readability and clarity
-- Test quality and intent communication
-- Naming, structure, duplication
-- Error handling
-
-**Checklist:**
-1. **Correctness**: Do tests cover happy path AND failure modes?
-2. **Minimality**: Every changed line serves the task. Flag extras.
-3. **Consistency**: Code matches existing patterns?
-4. **Commit quality**: Atomic commits, clear messages?
-5. **No loose ends**: No TODOs, no "will fix later", no commented-out code.
-
-**Output format:**
-```markdown
-## Auto-Review
-
-**Verdict:** APPROVE / REJECT
-
-**Vision & Architecture:** [OK / issues]
-**Practical Quality:** [OK / issues]
-**Code Quality:** [OK / issues]
-
-If REJECT:
-- [Specific issue 1]
-- [Specific issue 2]
-```
-
-**Flow:**
-- REJECT → back to implementation, no user involvement
-- APPROVE → present summary to user for manual confirmation
+| Agent | Config | Model |
+|-------|--------|-------|
+| Don (Tech Lead) | `_ai/agents/don.md` | Sonnet |
+| Uncle Bob (Code Quality) | `_ai/agents/uncle-bob.md` | Sonnet |
+| Kent (Tests) | `_ai/agents/kent.md` | Opus |
+| Rob (Implementation) | `_ai/agents/rob.md` | Opus |
+| Auto-Review | `_ai/agents/auto-review.md` | Sonnet |
 
 ## Forbidden Patterns
 
