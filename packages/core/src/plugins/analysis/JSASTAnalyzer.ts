@@ -55,7 +55,6 @@ import { Profiler } from '../../core/Profiler.js';
 import { ScopeTracker } from '../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../core/SemanticId.js';
 import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
-import { NodeFactory } from '../../core/NodeFactory.js';
 import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
@@ -137,6 +136,7 @@ import {
   ControlFlowProcessor,
   CallExpressionProcessor,
   ErrorTrackingProcessor,
+  ReturnExpressionParser,
 } from './ast/delegate/index.js';
 
 // === LOCAL TYPES ===
@@ -256,6 +256,7 @@ export class JSASTAnalyzer extends Plugin {
   private controlFlowProcessor = new ControlFlowProcessor();
   private callExpressionProcessor: CallExpressionProcessor;
   private errorTrackingProcessor = new ErrorTrackingProcessor();
+  private returnExpressionParser = new ReturnExpressionParser();
 
   constructor() {
     super();
@@ -1487,26 +1488,8 @@ export class JSASTAnalyzer extends Plugin {
     return memberExpressionToString(expr);
   }
 
-  /**
-   * Extract return expression info from an expression node.
-   * Used for both explicit return statements and implicit arrow returns.
-   *
-   * This method consolidates ~450 lines of duplicated expression handling code
-   * from three locations:
-   * 1. Top-level implicit arrow returns (arrow function expression body)
-   * 2. ReturnStatement handler (explicit returns)
-   * 3. Nested arrow function implicit returns
-   *
-   * @param expr - The expression being returned
-   * @param module - Module info for file context
-   * @param literals - Collection to add literal nodes to
-   * @param literalCounterRef - Counter for generating unique literal IDs
-   * @param baseLine - Line number for literal ID generation
-   * @param baseColumn - Column number for literal ID generation
-   * @param literalIdSuffix - 'return' or 'implicit_return'
-   * @returns Partial ReturnStatementInfo with expression-specific fields
-   */
-  private extractReturnExpressionInfo(
+  /** Delegates to ReturnExpressionParser (REG-460 Phase 7) */
+  extractReturnExpressionInfo(
     expr: t.Expression,
     module: { file: string },
     literals: LiteralInfo[],
@@ -1515,179 +1498,9 @@ export class JSASTAnalyzer extends Plugin {
     baseColumn: number,
     literalIdSuffix: 'return' | 'implicit_return' | 'yield' = 'return'
   ): Partial<ReturnStatementInfo> {
-    const exprLine = getLine(expr);
-    const exprColumn = getColumn(expr);
-
-    // Identifier (variable reference)
-    if (t.isIdentifier(expr)) {
-      return {
-        returnValueType: 'VARIABLE',
-        returnValueName: expr.name,
-      };
-    }
-
-    // TemplateLiteral must come BEFORE isLiteral (TemplateLiteral extends Literal)
-    if (t.isTemplateLiteral(expr)) {
-      const sourceNames: string[] = [];
-      for (const embedded of expr.expressions) {
-        if (t.isIdentifier(embedded)) {
-          sourceNames.push(embedded.name);
-        }
-      }
-      return {
-        returnValueType: 'EXPRESSION',
-        expressionType: 'TemplateLiteral',
-        returnValueLine: exprLine,
-        returnValueColumn: exprColumn,
-        returnValueId: NodeFactory.generateExpressionId(
-          'TemplateLiteral', module.file, exprLine, exprColumn
-        ),
-        ...(sourceNames.length > 0 ? { expressionSourceNames: sourceNames } : {}),
-      };
-    }
-
-    // Literal values (after TemplateLiteral check)
-    if (t.isLiteral(expr)) {
-      const literalId = `LITERAL#${literalIdSuffix}#${module.file}#${baseLine}:${baseColumn}:${literalCounterRef.value++}`;
-      literals.push({
-        id: literalId,
-        type: 'LITERAL',
-        value: ExpressionEvaluator.extractLiteralValue(expr),
-        valueType: typeof ExpressionEvaluator.extractLiteralValue(expr),
-        file: module.file,
-        line: exprLine,
-        column: exprColumn,
-      });
-      return {
-        returnValueType: 'LITERAL',
-        returnValueId: literalId,
-      };
-    }
-
-    // Direct function call: return foo()
-    if (t.isCallExpression(expr) && t.isIdentifier(expr.callee)) {
-      return {
-        returnValueType: 'CALL_SITE',
-        returnValueLine: exprLine,
-        returnValueColumn: exprColumn,
-        returnValueCallName: expr.callee.name,
-      };
-    }
-
-    // Method call: return obj.method()
-    if (t.isCallExpression(expr) && t.isMemberExpression(expr.callee)) {
-      return {
-        returnValueType: 'METHOD_CALL',
-        returnValueLine: exprLine,
-        returnValueColumn: exprColumn,
-        returnValueCallName: t.isIdentifier(expr.callee.property)
-          ? expr.callee.property.name
-          : undefined,
-      };
-    }
-
-    // BinaryExpression: return a + b
-    if (t.isBinaryExpression(expr)) {
-      return {
-        returnValueType: 'EXPRESSION',
-        expressionType: 'BinaryExpression',
-        returnValueLine: exprLine,
-        returnValueColumn: exprColumn,
-        operator: expr.operator,
-        returnValueId: NodeFactory.generateExpressionId(
-          'BinaryExpression', module.file, exprLine, exprColumn
-        ),
-        leftSourceName: t.isIdentifier(expr.left) ? expr.left.name : undefined,
-        rightSourceName: t.isIdentifier(expr.right) ? expr.right.name : undefined,
-      };
-    }
-
-    // LogicalExpression: return a && b, return a || b
-    if (t.isLogicalExpression(expr)) {
-      return {
-        returnValueType: 'EXPRESSION',
-        expressionType: 'LogicalExpression',
-        returnValueLine: exprLine,
-        returnValueColumn: exprColumn,
-        operator: expr.operator,
-        returnValueId: NodeFactory.generateExpressionId(
-          'LogicalExpression', module.file, exprLine, exprColumn
-        ),
-        leftSourceName: t.isIdentifier(expr.left) ? expr.left.name : undefined,
-        rightSourceName: t.isIdentifier(expr.right) ? expr.right.name : undefined,
-      };
-    }
-
-    // ConditionalExpression: return condition ? a : b
-    if (t.isConditionalExpression(expr)) {
-      return {
-        returnValueType: 'EXPRESSION',
-        expressionType: 'ConditionalExpression',
-        returnValueLine: exprLine,
-        returnValueColumn: exprColumn,
-        returnValueId: NodeFactory.generateExpressionId(
-          'ConditionalExpression', module.file, exprLine, exprColumn
-        ),
-        consequentSourceName: t.isIdentifier(expr.consequent) ? expr.consequent.name : undefined,
-        alternateSourceName: t.isIdentifier(expr.alternate) ? expr.alternate.name : undefined,
-      };
-    }
-
-    // UnaryExpression: return !x, return -x
-    if (t.isUnaryExpression(expr)) {
-      return {
-        returnValueType: 'EXPRESSION',
-        expressionType: 'UnaryExpression',
-        returnValueLine: exprLine,
-        returnValueColumn: exprColumn,
-        operator: expr.operator,
-        returnValueId: NodeFactory.generateExpressionId(
-          'UnaryExpression', module.file, exprLine, exprColumn
-        ),
-        unaryArgSourceName: t.isIdentifier(expr.argument) ? expr.argument.name : undefined,
-      };
-    }
-
-    // MemberExpression (property access): return obj.prop
-    if (t.isMemberExpression(expr)) {
-      return {
-        returnValueType: 'EXPRESSION',
-        expressionType: 'MemberExpression',
-        returnValueLine: exprLine,
-        returnValueColumn: exprColumn,
-        returnValueId: NodeFactory.generateExpressionId(
-          'MemberExpression', module.file, exprLine, exprColumn
-        ),
-        object: t.isIdentifier(expr.object) ? expr.object.name : undefined,
-        objectSourceName: t.isIdentifier(expr.object) ? expr.object.name : undefined,
-        property: t.isIdentifier(expr.property) ? expr.property.name : undefined,
-        computed: expr.computed,
-      };
-    }
-
-    // NewExpression: return new Foo()
-    if (t.isNewExpression(expr)) {
-      return {
-        returnValueType: 'EXPRESSION',
-        expressionType: 'NewExpression',
-        returnValueLine: exprLine,
-        returnValueColumn: exprColumn,
-        returnValueId: NodeFactory.generateExpressionId(
-          'NewExpression', module.file, exprLine, exprColumn
-        ),
-      };
-    }
-
-    // Fallback for other expression types
-    return {
-      returnValueType: 'EXPRESSION',
-      expressionType: expr.type,
-      returnValueLine: exprLine,
-      returnValueColumn: exprColumn,
-      returnValueId: NodeFactory.generateExpressionId(
-        expr.type, module.file, exprLine, exprColumn
-      ),
-    };
+    return this.returnExpressionParser.extractReturnExpressionInfo(
+      expr, module, literals, literalCounterRef, baseLine, baseColumn, literalIdSuffix
+    );
   }
 
 
