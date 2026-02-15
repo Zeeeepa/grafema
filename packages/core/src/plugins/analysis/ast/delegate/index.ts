@@ -6,3 +6,4 @@ export { ControlFlowProcessor } from './ControlFlowProcessor.js';
 export { CallExpressionProcessor } from './CallExpressionProcessor.js';
 export { ErrorTrackingProcessor } from './ErrorTrackingProcessor.js';
 export { ReturnExpressionParser } from './ReturnExpressionParser.js';
+export { VariableDeclarationProcessor } from './VariableDeclarationProcessor.js';
