@@ -115,6 +115,11 @@ import type {
   ExtractedVariable,
 } from './ast/types.js';
 import { extractNamesFromPattern } from './ast/utils/extractNamesFromPattern.js';
+import { unwrapAwaitExpression } from './ast/utils/unwrapAwaitExpression.js';
+import { extractCallInfo } from './ast/utils/extractCallInfo.js';
+import { memberExpressionToString } from './ast/utils/memberExpressionToString.js';
+import { countLogicalOperators } from './ast/utils/countLogicalOperators.js';
+import { extractDiscriminantExpression } from './ast/utils/extractDiscriminantExpression.js';
 import { createFunctionBodyContext } from './ast/FunctionBodyContext.js';
 import type { FunctionBodyContext } from './ast/FunctionBodyContext.js';
 import {
@@ -1003,66 +1008,10 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
-   * Recursively unwrap AwaitExpression to get the underlying expression.
-   * await await fetch() -> fetch()
-   */
-  private unwrapAwaitExpression(node: t.Expression): t.Expression {
-    if (node.type === 'AwaitExpression' && node.argument) {
-      return this.unwrapAwaitExpression(node.argument);
-    }
-    return node;
-  }
-
-  /**
-   * Extract call site information from CallExpression.
-   * Returns null if not a valid CallExpression.
-   */
-  private extractCallInfo(node: t.Expression): {
-    line: number;
-    column: number;
-    name: string;
-    isMethodCall: boolean;
-  } | null {
-    if (node.type !== 'CallExpression') {
-      return null;
-    }
-
-    const callee = node.callee;
-    let name: string;
-    let isMethodCall = false;
-
-    // Direct call: fetchUser()
-    if (t.isIdentifier(callee)) {
-      name = callee.name;
-    }
-    // Method call: obj.fetchUser() or arr.map()
-    else if (t.isMemberExpression(callee)) {
-      isMethodCall = true;
-      const objectName = t.isIdentifier(callee.object)
-        ? callee.object.name
-        : (t.isThisExpression(callee.object) ? 'this' : 'unknown');
-      const methodName = t.isIdentifier(callee.property)
-        ? callee.property.name
-        : 'unknown';
-      name = `${objectName}.${methodName}`;
-    }
-    else {
-      return null;
-    }
-
-    return {
-      line: node.loc?.start.line ?? 0,
-      column: node.loc?.start.column ?? 0,
-      name,
-      isMethodCall
-    };
-  }
-
-  /**
    * Check if expression is CallExpression or AwaitExpression wrapping a call.
    */
   private isCallOrAwaitExpression(node: t.Expression): boolean {
-    const unwrapped = this.unwrapAwaitExpression(node);
+    const unwrapped = unwrapAwaitExpression(node);
     return unwrapped.type === 'CallExpression';
   }
 
@@ -1179,8 +1128,8 @@ export class JSASTAnalyzer extends Plugin {
     }
     // Phase 2: CallExpression or AwaitExpression (REG-223)
     else if (this.isCallOrAwaitExpression(initNode)) {
-      const unwrapped = this.unwrapAwaitExpression(initNode);
-      const callInfo = this.extractCallInfo(unwrapped);
+      const unwrapped = unwrapAwaitExpression(initNode);
+      const callInfo = extractCallInfo(unwrapped);
 
       if (!callInfo) {
         // Unsupported call pattern (computed callee, etc.)
@@ -2195,7 +2144,7 @@ export class JSASTAnalyzer extends Plugin {
     let discriminantColumn: number | undefined;
 
     if (switchNode.discriminant) {
-      const discResult = this.extractDiscriminantExpression(
+      const discResult = extractDiscriminantExpression(
         switchNode.discriminant,
         module
       );
@@ -2253,51 +2202,11 @@ export class JSASTAnalyzer extends Plugin {
     }
   }
 
-  /**
-   * Extract EXPRESSION node ID and metadata for switch discriminant
-   */
-  private extractDiscriminantExpression(
+  extractDiscriminantExpression(
     discriminant: t.Expression,
     module: VisitorModule
   ): { id: string; expressionType: string; line: number; column: number } {
-    const line = getLine(discriminant);
-    const column = getColumn(discriminant);
-
-    if (t.isIdentifier(discriminant)) {
-      // Simple identifier: switch(x) - create EXPRESSION node
-      return {
-        id: ExpressionNode.generateId('Identifier', module.file, line, column),
-        expressionType: 'Identifier',
-        line,
-        column
-      };
-    } else if (t.isMemberExpression(discriminant)) {
-      // Member expression: switch(action.type)
-      return {
-        id: ExpressionNode.generateId('MemberExpression', module.file, line, column),
-        expressionType: 'MemberExpression',
-        line,
-        column
-      };
-    } else if (t.isCallExpression(discriminant)) {
-      // Call expression: switch(getType())
-      const callee = t.isIdentifier(discriminant.callee) ? discriminant.callee.name : '<complex>';
-      // Return CALL node ID instead of EXPRESSION (reuse existing call tracking)
-      return {
-        id: `${module.file}:CALL:${callee}:${line}:${column}`,
-        expressionType: 'CallExpression',
-        line,
-        column
-      };
-    }
-
-    // Default: create generic EXPRESSION
-    return {
-      id: ExpressionNode.generateId(discriminant.type, module.file, line, column),
-      expressionType: discriminant.type,
-      line,
-      column
-    };
+    return extractDiscriminantExpression(discriminant, module);
   }
 
   /**
@@ -2319,7 +2228,7 @@ export class JSASTAnalyzer extends Plugin {
       return test.name;
     } else if (t.isMemberExpression(test)) {
       // Member expression: case Action.ADD
-      return this.memberExpressionToString(test);
+      return memberExpressionToString(test);
     }
 
     return '<complex>';
@@ -2376,68 +2285,12 @@ export class JSASTAnalyzer extends Plugin {
     return false;
   }
 
-  /**
-   * Count logical operators (&& and ||) in a condition expression.
-   * Used for cyclomatic complexity calculation (Phase 6 REG-267).
-   *
-   * @param node - The condition expression to analyze
-   * @returns Number of logical operators found
-   */
-  private countLogicalOperators(node: t.Expression): number {
-    let count = 0;
-
-    const traverse = (expr: t.Expression | t.Node): void => {
-      if (t.isLogicalExpression(expr)) {
-        // Count && and || operators
-        if (expr.operator === '&&' || expr.operator === '||') {
-          count++;
-        }
-        traverse(expr.left);
-        traverse(expr.right);
-      } else if (t.isConditionalExpression(expr)) {
-        // Handle ternary conditions: test ? consequent : alternate
-        traverse(expr.test);
-        traverse(expr.consequent);
-        traverse(expr.alternate);
-      } else if (t.isUnaryExpression(expr)) {
-        traverse(expr.argument);
-      } else if (t.isBinaryExpression(expr)) {
-        traverse(expr.left);
-        traverse(expr.right);
-      } else if (t.isSequenceExpression(expr)) {
-        for (const e of expr.expressions) {
-          traverse(e);
-        }
-      } else if (t.isParenthesizedExpression(expr)) {
-        traverse(expr.expression);
-      }
-    };
-
-    traverse(node);
-    return count;
+  countLogicalOperators(node: t.Expression): number {
+    return countLogicalOperators(node);
   }
 
-  /**
-   * Convert MemberExpression to string representation
-   */
-  private memberExpressionToString(expr: t.MemberExpression): string {
-    const parts: string[] = [];
-
-    let current: t.Expression = expr;
-    while (t.isMemberExpression(current)) {
-      if (t.isIdentifier(current.property)) {
-        parts.unshift(current.property.name);
-      } else {
-        parts.unshift('<computed>');
-      }
-      current = current.object;
-    }
-
-    if (t.isIdentifier(current)) {
-      parts.unshift(current.name);
-    }
-
-    return parts.join('.');
+  memberExpressionToString(expr: t.MemberExpression): string {
+    return memberExpressionToString(expr);
   }
 
   /**
