@@ -33,27 +33,16 @@ function isAnalysisResult(value: unknown): value is AnalysisResult {
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import { GraphBuilder } from './ast/GraphBuilder.js';
 import {
-  ImportExportVisitor,
-  VariableVisitor,
-  FunctionVisitor,
-  ClassVisitor,
-  CallExpressionVisitor,
-  TypeScriptVisitor,
-  PropertyAccessVisitor,
   type VisitorModule,
   type VisitorCollections,
-  type TrackVariableAssignmentCallback
 } from './ast/visitors/index.js';
 import { Task } from '../../core/Task.js';
 import { PriorityQueue } from '../../core/PriorityQueue.js';
 import { WorkerPool } from '../../core/WorkerPool.js';
 import { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult } from '../../core/ASTWorkerPool.js';
-import { ConditionParser } from './ast/ConditionParser.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 import { Profiler } from '../../core/Profiler.js';
 import { ScopeTracker } from '../../core/ScopeTracker.js';
-import { computeSemanticId } from '../../core/SemanticId.js';
-import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
 import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
@@ -98,7 +87,6 @@ import type {
   UpdateExpressionInfo,
   PromiseResolutionInfo,
   PromiseExecutorContext,
-  RejectionPatternInfo,
   CatchesFromInfo,
   PropertyAccessInfo,
   TypeParameterInfo,
@@ -138,6 +126,11 @@ import {
   ErrorTrackingProcessor,
   ReturnExpressionParser,
   VariableDeclarationProcessor,
+  createAnalysisCollections,
+  createCounterRefs,
+  createProcessedNodes,
+  assembleCollections,
+  composeAndTraverse,
 } from './ast/delegate/index.js';
 
 // === LOCAL TYPES ===
@@ -639,13 +632,18 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
-   * Анализировать один модуль
+   * Анализировать один модуль.
+   *
+   * REG-460 Phase 10: Collection initialization, visitor composition, and
+   * traversal are delegated to CollectionFactory and VisitorComposer.
+   * This method orchestrates: parse -> init -> traverse -> build graph.
    */
   async analyzeModule(module: ModuleNode, graph: GraphBackend, projectPath: string): Promise<{ nodes: number; edges: number }> {
     let nodesCreated = 0;
     let edgesCreated = 0;
 
     try {
+      // 1. Read and parse source file
       this.profiler.start('file_read');
       const code = readFileSync(resolveNodeFile(module.file, projectPath), 'utf-8');
       this.profiler.end('file_read');
@@ -657,565 +655,66 @@ export class JSASTAnalyzer extends Plugin {
       });
       this.profiler.end('babel_parse');
 
-      // Create ScopeTracker for semantic ID generation
-      // Use basename for shorter, more readable semantic IDs
+      // 2. Initialize collections, counters, and processedNodes via factories
       const scopeTracker = new ScopeTracker(basename(module.file));
+      const arrays = createAnalysisCollections();
+      const counters = createCounterRefs();
+      const processedNodes = createProcessedNodes();
 
-      const functions: FunctionInfo[] = [];
-      const parameters: ParameterInfo[] = [];
-      const scopes: ScopeInfo[] = [];
-      // Branching (switch statements)
-      const branches: BranchInfo[] = [];
-      const cases: CaseInfo[] = [];
-      // Control flow (loops)
-      const loops: LoopInfo[] = [];
-      const variableDeclarations: VariableDeclarationInfo[] = [];
-      const callSites: CallSiteInfo[] = [];
-      const methodCalls: MethodCallInfo[] = [];
-      const eventListeners: EventListenerInfo[] = [];
-      const classInstantiations: ClassInstantiationInfo[] = [];
-      const constructorCalls: ConstructorCallInfo[] = [];
-      const classDeclarations: ClassDeclarationInfo[] = [];
-      const methodCallbacks: MethodCallbackInfo[] = [];
-      const callArguments: CallArgumentInfo[] = [];
-      const imports: ImportInfo[] = [];
-      const exports: ExportInfo[] = [];
-      const httpRequests: HttpRequestInfo[] = [];
-      const literals: LiteralInfo[] = [];
-      const variableAssignments: VariableAssignmentInfo[] = [];
-      // TypeScript-specific collections
-      const interfaces: InterfaceDeclarationInfo[] = [];
-      const typeAliases: TypeAliasInfo[] = [];
-      const enums: EnumDeclarationInfo[] = [];
-      const decorators: DecoratorInfo[] = [];
-      // Type parameter tracking for generics (REG-303)
-      const typeParameters: TypeParameterInfo[] = [];
-      // Object/Array literal tracking for data flow
-      const objectLiterals: ObjectLiteralInfo[] = [];
-      const objectProperties: ObjectPropertyInfo[] = [];
-      const arrayLiterals: ArrayLiteralInfo[] = [];
-      const arrayElements: ArrayElementInfo[] = [];
-      // Array mutation tracking for FLOWS_INTO edges
-      const arrayMutations: ArrayMutationInfo[] = [];
-      // Object mutation tracking for FLOWS_INTO edges
-      const objectMutations: ObjectMutationInfo[] = [];
-      // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
-      const variableReassignments: VariableReassignmentInfo[] = [];
-      // Return statement tracking for RETURNS edges
-      const returnStatements: ReturnStatementInfo[] = [];
-      // Update expression tracking for MODIFIES edges (REG-288, REG-312)
-      const updateExpressions: UpdateExpressionInfo[] = [];
-      // Promise resolution tracking for RESOLVES_TO edges (REG-334)
-      const promiseResolutions: PromiseResolutionInfo[] = [];
-      // Promise executor contexts (REG-334) - keyed by executor function's start:end position
-      const promiseExecutorContexts = new Map<string, PromiseExecutorContext>();
-      // Yield expression tracking for YIELDS/DELEGATES_TO edges (REG-270)
-      const yieldExpressions: YieldExpressionInfo[] = [];
-      // REG-311: Async error tracking
-      const rejectionPatterns: RejectionPatternInfo[] = [];
-      const catchesFromInfos: CatchesFromInfo[] = [];
-      // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
-      const propertyAccesses: PropertyAccessInfo[] = [];
+      // 3. Assemble the unified collections object used by all visitors
+      const allCollections = assembleCollections(
+        arrays, counters, processedNodes, code, module.id, scopeTracker
+      ) as Collections;
 
-      const ifScopeCounterRef: CounterRef = { value: 0 };
-      const scopeCounterRef: CounterRef = { value: 0 };
-      const varDeclCounterRef: CounterRef = { value: 0 };
-      const callSiteCounterRef: CounterRef = { value: 0 };
-      const functionCounterRef: CounterRef = { value: 0 };
-      const httpRequestCounterRef: CounterRef = { value: 0 };
-      const literalCounterRef: CounterRef = { value: 0 };
-      const anonymousFunctionCounterRef: CounterRef = { value: 0 };
-      const objectLiteralCounterRef: CounterRef = { value: 0 };
-      const arrayLiteralCounterRef: CounterRef = { value: 0 };
-      const branchCounterRef: CounterRef = { value: 0 };
-      const caseCounterRef: CounterRef = { value: 0 };
-      const propertyAccessCounterRef: CounterRef = { value: 0 };
-
-      const processedNodes: ProcessedNodes = {
-        functions: new Set(),
-        classes: new Set(),
-        imports: new Set(),
-        exports: new Set(),
-        variables: new Set(),
-        callSites: new Set(),
-        methodCalls: new Set(),
-        varDecls: new Set(),
-        eventListeners: new Set()
-      };
-
-      // Imports/Exports
-      this.profiler.start('traverse_imports');
-      const importExportVisitor = new ImportExportVisitor(
-        module,
-        { imports, exports },
-        this.extractVariableNamesFromPattern.bind(this)
+      // 4. Run all visitor traversals via VisitorComposer
+      const { hasTopLevelAwait } = composeAndTraverse(
+        ast, traverse, module, allCollections, scopeTracker, this as unknown as Parameters<typeof composeAndTraverse>[5], this.profiler
       );
-      traverse(ast, importExportVisitor.getImportHandlers());
-      traverse(ast, importExportVisitor.getExportHandlers());
-      this.profiler.end('traverse_imports');
 
-      // Variables
-      this.profiler.start('traverse_variables');
-      const variableVisitor = new VariableVisitor(
-        module,
-        { variableDeclarations, classInstantiations, literals, variableAssignments, varDeclCounterRef, literalCounterRef, scopes, scopeCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef },
-        this.extractVariableNamesFromPattern.bind(this),
-        this.trackVariableAssignment.bind(this) as TrackVariableAssignmentCallback,
-        scopeTracker  // Pass ScopeTracker for semantic ID generation
-      );
-      traverse(ast, variableVisitor.getHandlers());
-      this.profiler.end('traverse_variables');
-
-      const allCollections: Collections = {
-        functions, parameters, scopes,
-        // Branching (switch statements)
-        branches, cases,
-        // Control flow (loops)
-        loops,
-        variableDeclarations, callSites, methodCalls,
-        eventListeners, methodCallbacks, callArguments, classInstantiations, constructorCalls, classDeclarations,
-        httpRequests, literals, variableAssignments,
-        // TypeScript-specific collections
-        interfaces, typeAliases, enums, decorators,
-        // Type parameter tracking for generics (REG-303)
-        typeParameters,
-        // Object/Array literal tracking
-        objectLiterals, objectProperties, arrayLiterals, arrayElements,
-        // Array mutation tracking
-        arrayMutations,
-        // Object mutation tracking
-        objectMutations,
-        // Variable reassignment tracking (REG-290)
-        variableReassignments,
-        // Return statement tracking
-        returnStatements,
-        // Update expression tracking (REG-288, REG-312)
-        updateExpressions,
-        // Promise resolution tracking (REG-334)
-        promiseResolutions,
-        promiseExecutorContexts,
-        // Yield expression tracking (REG-270)
-        yieldExpressions,
-        // REG-311: Async error tracking
-        rejectionPatterns,
-        catchesFromInfos,
-        // Property access tracking (REG-395)
-        propertyAccesses,
-        propertyAccessCounterRef,
-        objectLiteralCounterRef, arrayLiteralCounterRef,
-        ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
-        callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
-        literalCounterRef, anonymousFunctionCounterRef,
-        branchCounterRef, caseCounterRef,
-        processedNodes,
-        imports, exports, code,
-        // VisitorCollections compatibility
-        classes: classDeclarations,
-        methods: [],
-        variables: variableDeclarations,
-        sideEffects: [],
-        variableCounterRef: varDeclCounterRef,
-        // ScopeTracker for semantic ID generation
-        scopeTracker
-      };
-
-      // Functions
-      this.profiler.start('traverse_functions');
-      const functionVisitor = new FunctionVisitor(
-        module,
-        allCollections,
-        this.analyzeFunctionBody.bind(this),
-        scopeTracker  // Pass ScopeTracker for semantic ID generation
-      );
-      traverse(ast, functionVisitor.getHandlers());
-      this.profiler.end('traverse_functions');
-
-      // AssignmentExpression (module-level function assignments)
-      this.profiler.start('traverse_assignments');
-      traverse(ast, {
-        AssignmentExpression: (assignPath: NodePath<t.AssignmentExpression>) => {
-          const assignNode = assignPath.node;
-          const functionParent = assignPath.getFunctionParent();
-          if (functionParent) return;
-
-          if (assignNode.right &&
-              (assignNode.right.type === 'FunctionExpression' ||
-               assignNode.right.type === 'ArrowFunctionExpression')) {
-
-            let functionName = 'anonymous';
-            if (assignNode.left.type === 'MemberExpression') {
-              const prop = assignNode.left.property;
-              if (t.isIdentifier(prop)) {
-                functionName = prop.name;
-              }
-            } else if (assignNode.left.type === 'Identifier') {
-              functionName = assignNode.left.name;
-            }
-
-            const funcNode = assignNode.right;
-            // Use semantic ID as primary ID (matching FunctionVisitor pattern)
-            const functionId = computeSemanticId('FUNCTION', functionName, scopeTracker.getContext());
-
-            functions.push({
-              id: functionId,
-              type: 'FUNCTION',
-              name: functionName,
-              file: module.file,
-              line: getLine(assignNode),
-              column: getColumn(assignNode),
-              async: funcNode.async || false,
-              generator: funcNode.type === 'FunctionExpression' ? funcNode.generator : false,
-              isAssignment: true
-            });
-
-            const funcBodyScopeId = `SCOPE#${functionName}:body#${module.file}#${getLine(assignNode)}`;
-            scopes.push({
-              id: funcBodyScopeId,
-              type: 'SCOPE',
-              scopeType: 'function_body',
-              name: `${functionName}:body`,
-              semanticId: `${functionName}:function_body[0]`,
-              conditional: false,
-              file: module.file,
-              line: getLine(assignNode),
-              parentFunctionId: functionId
-            });
-
-            const funcPath = assignPath.get('right') as NodePath<t.FunctionExpression | t.ArrowFunctionExpression>;
-            // Enter function scope for semantic ID generation and analyze
-            scopeTracker.enterScope(functionName, 'function');
-            this.analyzeFunctionBody(funcPath, funcBodyScopeId, module, allCollections);
-            scopeTracker.exitScope();
-          }
-
-          // === VARIABLE REASSIGNMENT (REG-290) ===
-          // Check if LHS is simple identifier (not obj.prop, not arr[i])
-          // Must be checked at module level too
-          if (assignNode.left.type === 'Identifier') {
-            // Initialize collection if not exists
-            if (!allCollections.variableReassignments) {
-              allCollections.variableReassignments = [];
-            }
-            const variableReassignments = allCollections.variableReassignments as VariableReassignmentInfo[];
-
-            this.detectVariableReassignment(assignNode, module, variableReassignments, scopeTracker);
-          }
-          // === END VARIABLE REASSIGNMENT ===
-
-          // Check for indexed array assignment at module level: arr[i] = value
-          this.detectIndexedArrayAssignment(assignNode, module, arrayMutations, scopeTracker, allCollections);
-
-          // Check for object property assignment at module level: obj.prop = value
-          this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker);
-        }
-      });
-      this.profiler.end('traverse_assignments');
-
-      // Module-level UpdateExpression (obj.count++, arr[i]++, i++) - REG-288/REG-312
-      this.profiler.start('traverse_updates');
-      traverse(ast, {
-        UpdateExpression: (updatePath: NodePath<t.UpdateExpression>) => {
-          // Skip if inside a function - analyzeFunctionBody handles those
-          const functionParent = updatePath.getFunctionParent();
-          if (functionParent) return;
-
-          // Module-level update expression: no parentScopeId
-          this.collectUpdateExpression(updatePath.node, module, updateExpressions, undefined, scopeTracker);
-        }
-      });
-      this.profiler.end('traverse_updates');
-
-      // Classes
-      this.profiler.start('traverse_classes');
-      const classVisitor = new ClassVisitor(
-        module,
-        allCollections,
-        this.analyzeFunctionBody.bind(this),
-        scopeTracker  // Pass ScopeTracker for semantic ID generation
-      );
-      traverse(ast, classVisitor.getHandlers());
-      this.profiler.end('traverse_classes');
-
-      // TypeScript-specific constructs (interfaces, type aliases, enums)
-      this.profiler.start('traverse_typescript');
-      const typescriptVisitor = new TypeScriptVisitor(module, allCollections, scopeTracker);
-      traverse(ast, typescriptVisitor.getHandlers());
-      this.profiler.end('traverse_typescript');
-
-      // Module-level callbacks
-      this.profiler.start('traverse_callbacks');
-      traverse(ast, {
-        FunctionExpression: (funcPath: NodePath<t.FunctionExpression>) => {
-          const funcNode = funcPath.node;
-          const functionParent = funcPath.getFunctionParent();
-          if (functionParent) return;
-
-          if (funcPath.parent && funcPath.parent.type === 'CallExpression') {
-            const funcName = funcNode.id ? funcNode.id.name : this.generateAnonymousName(scopeTracker);
-            // Use semantic ID as primary ID (matching FunctionVisitor pattern)
-            const functionId = computeSemanticId('FUNCTION', funcName, scopeTracker.getContext());
-
-            functions.push({
-              id: functionId,
-              type: 'FUNCTION',
-              name: funcName,
-              file: module.file,
-              line: getLine(funcNode),
-              column: getColumn(funcNode),
-              async: funcNode.async || false,
-              generator: funcNode.generator || false,
-              isCallback: true,
-              parentScopeId: module.id
-            });
-
-            const callbackScopeId = `SCOPE#${funcName}:body#${module.file}#${getLine(funcNode)}`;
-            scopes.push({
-              id: callbackScopeId,
-              type: 'SCOPE',
-              scopeType: 'callback_body',
-              name: `${funcName}:body`,
-              semanticId: `${funcName}:callback_body[0]`,
-              conditional: false,
-              file: module.file,
-              line: getLine(funcNode),
-              parentFunctionId: functionId
-            });
-
-            // Enter callback scope for semantic ID generation and analyze
-            scopeTracker.enterScope(funcName, 'callback');
-            this.analyzeFunctionBody(funcPath, callbackScopeId, module, allCollections);
-            scopeTracker.exitScope();
-            funcPath.skip();
-          }
-        }
-      });
-      this.profiler.end('traverse_callbacks');
-
-      // Call expressions
-      this.profiler.start('traverse_calls');
-      const callExpressionVisitor = new CallExpressionVisitor(module, allCollections, scopeTracker);
-      traverse(ast, callExpressionVisitor.getHandlers());
-      this.profiler.end('traverse_calls');
-
-      // REG-297: Detect top-level await expressions
-      this.profiler.start('traverse_top_level_await');
-      let hasTopLevelAwait = false;
-      traverse(ast, {
-        AwaitExpression(awaitPath: NodePath<t.AwaitExpression>) {
-          if (!awaitPath.getFunctionParent()) {
-            hasTopLevelAwait = true;
-            awaitPath.stop();
-          }
-        },
-        // for-await-of uses ForOfStatement.await, not AwaitExpression
-        ForOfStatement(forOfPath: NodePath<t.ForOfStatement>) {
-          if (forOfPath.node.await && !forOfPath.getFunctionParent()) {
-            hasTopLevelAwait = true;
-            forOfPath.stop();
-          }
-        }
-      });
-      this.profiler.end('traverse_top_level_await');
-
-      // Property access expressions (REG-395)
-      this.profiler.start('traverse_property_access');
-      const propertyAccessVisitor = new PropertyAccessVisitor(module, allCollections, scopeTracker);
-      traverse(ast, propertyAccessVisitor.getHandlers());
-      this.profiler.end('traverse_property_access');
-
-      // Module-level NewExpression (constructor calls)
-      // This handles top-level code like `const x = new Date()` that's not inside a function
-      this.profiler.start('traverse_new');
-      const processedConstructorCalls = new Set<string>();
-      traverse(ast, {
-        NewExpression: (newPath: NodePath<t.NewExpression>) => {
-          const newNode = newPath.node;
-          const nodeKey = `constructor:new:${newNode.start}:${newNode.end}`;
-          if (processedConstructorCalls.has(nodeKey)) {
-            return;
-          }
-          processedConstructorCalls.add(nodeKey);
-
-          // Determine className from callee
-          let className: string | null = null;
-          if (newNode.callee.type === 'Identifier') {
-            className = newNode.callee.name;
-          } else if (newNode.callee.type === 'MemberExpression' && newNode.callee.property.type === 'Identifier') {
-            className = newNode.callee.property.name;
-          }
-
-          if (className) {
-            const line = getLine(newNode);
-            const column = getColumn(newNode);
-            const constructorCallId = ConstructorCallNode.generateId(className, module.file, line, column);
-            const isBuiltin = ConstructorCallNode.isBuiltinConstructor(className);
-
-            constructorCalls.push({
-              id: constructorCallId,
-              type: 'CONSTRUCTOR_CALL',
-              className,
-              isBuiltin,
-              file: module.file,
-              line,
-              column
-            });
-
-            // REG-334: If this is Promise constructor with executor callback,
-            // register the context for resolve/reject detection
-            if (className === 'Promise' && newNode.arguments.length > 0) {
-              const executorArg = newNode.arguments[0];
-
-              // Only handle inline function expressions (not variable references)
-              if (t.isArrowFunctionExpression(executorArg) || t.isFunctionExpression(executorArg)) {
-                // Extract resolve/reject parameter names
-                let resolveName: string | undefined;
-                let rejectName: string | undefined;
-
-                if (executorArg.params.length > 0 && t.isIdentifier(executorArg.params[0])) {
-                  resolveName = executorArg.params[0].name;
-                }
-                if (executorArg.params.length > 1 && t.isIdentifier(executorArg.params[1])) {
-                  rejectName = executorArg.params[1].name;
-                }
-
-                if (resolveName) {
-                  // Key by function node position to allow nested Promise detection
-                  const funcKey = `${executorArg.start}:${executorArg.end}`;
-                  promiseExecutorContexts.set(funcKey, {
-                    constructorCallId,
-                    resolveName,
-                    rejectName,
-                    file: module.file,
-                    line,
-                    // REG-311: Module-level Promise has no creator function
-                    creatorFunctionId: undefined
-                  });
-                }
-              }
-            }
-          }
-        }
-      });
-      this.profiler.end('traverse_new');
-
-      // Module-level IfStatements
-      this.profiler.start('traverse_ifs');
-      traverse(ast, {
-        IfStatement: (ifPath: NodePath<t.IfStatement>) => {
-          const functionParent = ifPath.getFunctionParent();
-          if (functionParent) return;
-
-          const ifNode = ifPath.node;
-          const condition = code.substring(ifNode.test.start!, ifNode.test.end!) || 'condition';
-          const counterId = ifScopeCounterRef.value++;
-          const ifScopeId = `SCOPE#if#${module.file}#${getLine(ifNode)}:${getColumn(ifNode)}:${counterId}`;
-
-          const constraints = ConditionParser.parse(ifNode.test);
-          const ifSemanticId = this.generateSemanticId('if_statement', scopeTracker);
-
-          scopes.push({
-            id: ifScopeId,
-            type: 'SCOPE',
-            scopeType: 'if_statement',
-            name: `if:${getLine(ifNode)}:${getColumn(ifNode)}:${counterId}`,
-            semanticId: ifSemanticId,
-            conditional: true,
-            condition,
-            constraints: constraints.length > 0 ? constraints : undefined,
-            file: module.file,
-            line: getLine(ifNode),
-            parentScopeId: module.id
-          });
-
-          if (ifNode.alternate && ifNode.alternate.type !== 'IfStatement') {
-            const elseCounterId = ifScopeCounterRef.value++;
-            const elseScopeId = `SCOPE#else#${module.file}#${getLine(ifNode.alternate)}:${getColumn(ifNode.alternate)}:${elseCounterId}`;
-
-            const negatedConstraints = constraints.length > 0 ? ConditionParser.negate(constraints) : undefined;
-            const elseSemanticId = this.generateSemanticId('else_statement', scopeTracker);
-
-            scopes.push({
-              id: elseScopeId,
-              type: 'SCOPE',
-              scopeType: 'else_statement',
-              name: `else:${getLine(ifNode.alternate)}:${getColumn(ifNode.alternate)}:${elseCounterId}`,
-              semanticId: elseSemanticId,
-              conditional: true,
-              constraints: negatedConstraints,
-              file: module.file,
-              line: getLine(ifNode.alternate),
-              parentScopeId: module.id
-            });
-          }
-        }
-      });
-      this.profiler.end('traverse_ifs');
-
-      // Build graph
+      // 5. Build graph from collected data
       this.profiler.start('graph_build');
       const result = await this.graphBuilder.build(module, graph, projectPath, {
-        functions,
-        scopes,
-        // Branching (switch statements) - use allCollections refs as they're populated by analyzeFunctionBody
-        branches: allCollections.branches || branches,
-        cases: allCollections.cases || cases,
-        // Control flow (loops) - use allCollections refs as they're populated by analyzeFunctionBody
-        loops: allCollections.loops || loops,
-        // Control flow (try/catch/finally) - Phase 4
+        functions: arrays.functions,
+        scopes: arrays.scopes,
+        branches: arrays.branches,
+        cases: arrays.cases,
+        loops: arrays.loops,
         tryBlocks: allCollections.tryBlocks,
         catchBlocks: allCollections.catchBlocks,
         finallyBlocks: allCollections.finallyBlocks,
-        variableDeclarations,
-        callSites,
-        methodCalls,
-        eventListeners,
-        classInstantiations,
-        constructorCalls,
-        classDeclarations,
-        methodCallbacks,
-        // REG-334: Use allCollections.callArguments to include function-level resolve/reject arguments
-        callArguments: allCollections.callArguments || callArguments,
-        imports,
-        exports,
-        httpRequests,
-        literals,
-        variableAssignments,
-        parameters,
-        // TypeScript-specific collections
-        interfaces,
-        typeAliases,
-        enums,
-        decorators,
-        // Type parameter tracking for generics (REG-303)
-        typeParameters,
-        // Array mutation tracking
-        arrayMutations,
-        // Object mutation tracking
-        objectMutations,
-        // Variable reassignment tracking (REG-290)
-        variableReassignments,
-        // Return statement tracking
-        returnStatements,
-        // Yield expression tracking (REG-270)
-        yieldExpressions,
-        // Update expression tracking (REG-288, REG-312)
-        updateExpressions,
-        // Promise resolution tracking (REG-334)
-        promiseResolutions: allCollections.promiseResolutions || promiseResolutions,
-        // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
-        objectLiterals: allCollections.objectLiterals || objectLiterals,
-        objectProperties: allCollections.objectProperties || objectProperties,
-        arrayLiterals: allCollections.arrayLiterals || arrayLiterals,
-        // REG-311: Async error tracking
-        rejectionPatterns: Array.isArray(allCollections.rejectionPatterns)
-          ? allCollections.rejectionPatterns as RejectionPatternInfo[]
-          : rejectionPatterns,
-        catchesFromInfos: Array.isArray(allCollections.catchesFromInfos)
-          ? allCollections.catchesFromInfos as CatchesFromInfo[]
-          : catchesFromInfos,
-        // Property access tracking (REG-395)
-        propertyAccesses: allCollections.propertyAccesses || propertyAccesses,
-        // REG-297: Top-level await tracking
+        variableDeclarations: arrays.variableDeclarations,
+        callSites: arrays.callSites,
+        methodCalls: arrays.methodCalls,
+        eventListeners: arrays.eventListeners,
+        classInstantiations: arrays.classInstantiations,
+        constructorCalls: arrays.constructorCalls,
+        classDeclarations: arrays.classDeclarations,
+        methodCallbacks: arrays.methodCallbacks,
+        callArguments: arrays.callArguments,
+        imports: arrays.imports,
+        exports: arrays.exports,
+        httpRequests: arrays.httpRequests,
+        literals: arrays.literals,
+        variableAssignments: arrays.variableAssignments,
+        parameters: arrays.parameters,
+        interfaces: arrays.interfaces,
+        typeAliases: arrays.typeAliases,
+        enums: arrays.enums,
+        decorators: arrays.decorators,
+        typeParameters: arrays.typeParameters,
+        arrayMutations: arrays.arrayMutations,
+        objectMutations: arrays.objectMutations,
+        variableReassignments: arrays.variableReassignments,
+        returnStatements: arrays.returnStatements,
+        yieldExpressions: arrays.yieldExpressions,
+        updateExpressions: arrays.updateExpressions,
+        promiseResolutions: arrays.promiseResolutions,
+        objectLiterals: arrays.objectLiterals,
+        objectProperties: arrays.objectProperties,
+        arrayLiterals: arrays.arrayLiterals,
+        rejectionPatterns: arrays.rejectionPatterns,
+        catchesFromInfos: arrays.catchesFromInfos,
+        propertyAccesses: arrays.propertyAccesses,
         hasTopLevelAwait
       });
       this.profiler.end('graph_build');
