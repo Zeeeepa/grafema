@@ -16,3 +16,4 @@ export {
 export type { AnalysisArrays, AnalysisCounterRefs } from './CollectionFactory.js';
 export { composeAndTraverse } from './VisitorComposer.js';
 export type { VisitorComposerDelegate, CompositionResult } from './VisitorComposer.js';
+export { attachControlFlowMetadata } from './attachControlFlowMetadata.js';
