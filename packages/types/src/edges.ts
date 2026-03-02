@@ -65,6 +65,7 @@ export const EDGE_TYPE = {
   SPREADS_FROM: 'SPREADS_FROM', // SpreadElement → source being spread
   ELEMENT_OF: 'ELEMENT_OF',   // X is an element/value of collection Y (for-of, destructuring, array methods)
   KEY_OF: 'KEY_OF',           // X is a key of collection Y (for-in)
+  DESTRUCTURED_FROM: 'DESTRUCTURED_FROM', // VARIABLE → source it was destructured from, metadata.property = key
 
   // Object/Array structure
   HAS_PROPERTY: 'HAS_PROPERTY',   // OBJECT_LITERAL -> property value

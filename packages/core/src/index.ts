@@ -267,6 +267,9 @@ export { resolveCallbackCalls } from './plugins/enrichment/resolveCallbackCalls.
 export { ConfigRoutingMapBuilder } from './plugins/enrichment/ConfigRoutingMapBuilder.js';
 export { ServiceConnectionEnricher } from './plugins/enrichment/ServiceConnectionEnricher.js';
 export { RedisEnricher } from './plugins/enrichment/RedisEnricher.js';
+export { PropertyAssignmentResolver } from './plugins/enrichment/PropertyAssignmentResolver.js';
+export { resolveValueTarget } from './plugins/enrichment/resolveValueTarget.js';
+export type { ResolvedTarget, GraphReader } from './plugins/enrichment/resolveValueTarget.js';
 
 // Library registry
 export { LibraryRegistry } from './data/libraries/LibraryRegistry.js';

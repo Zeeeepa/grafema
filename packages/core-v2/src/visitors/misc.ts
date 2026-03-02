@@ -79,6 +79,12 @@ export function visitObjectPattern(
     });
   }
 
+  // Determine destructuring source for DESTRUCTURED_FROM edges
+  // `const { a, b } = source` → each binding gets DESTRUCTURED_FROM → source
+  const destructSource = !isParam && parent?.type === 'VariableDeclarator'
+    ? (parent as VariableDeclarator).init
+    : null;
+
   for (const prop of pattern.properties) {
     if (prop.type === 'ObjectProperty') {
       // { a } or { a: b } — the binding name is in the value
@@ -87,6 +93,12 @@ export function visitObjectPattern(
         const name = value.name;
         const line = value.loc?.start.line ?? node.loc?.start.line ?? 0;
         const nodeId = ctx.nodeId(nodeType, name, line);
+        // Extract the property key name for DESTRUCTURED_FROM metadata
+        const keyName = prop.key.type === 'Identifier'
+          ? (prop.key as { name: string }).name
+          : prop.key.type === 'StringLiteral'
+            ? (prop.key as { value: string }).value
+            : name;
         result.nodes.push({
           id: nodeId,
           type: nodeType,
@@ -100,6 +112,21 @@ export function visitObjectPattern(
           result.edges.push({ src: result.nodes[0].id, dst: nodeId, type: 'CONTAINS' });
         }
         ctx.declare(name, isParam ? 'param' : 'let', nodeId);
+
+        // DESTRUCTURED_FROM: variable → source with property key
+        if (destructSource?.type === 'Identifier') {
+          result.deferred.push({
+            kind: 'scope_lookup',
+            name: destructSource.name,
+            fromNodeId: nodeId,
+            edgeType: 'DESTRUCTURED_FROM',
+            scopeId: ctx.currentScope.id,
+            file: ctx.file,
+            line,
+            column: value.loc?.start.column ?? 0,
+            metadata: { property: keyName },
+          });
+        }
       }
       // Nested patterns (value is ObjectPattern/ArrayPattern) → walk engine visits as children
     }

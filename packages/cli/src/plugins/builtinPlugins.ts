@@ -40,6 +40,7 @@ import {
   CallbackCallResolver,
   RedisEnricher,
   NodejsBuiltinsResolver,
+  PropertyAssignmentResolver,
   // Validation
   CallResolverValidator,
   EvalBanValidator,
@@ -86,6 +87,7 @@ export const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   CallbackCallResolver: () => new CallbackCallResolver() as Plugin,
   RedisEnricher: () => new RedisEnricher() as Plugin,
   NodejsBuiltinsResolver: () => new NodejsBuiltinsResolver() as Plugin,
+  PropertyAssignmentResolver: () => new PropertyAssignmentResolver() as Plugin,
   // Validation
   CallResolverValidator: () => new CallResolverValidator() as Plugin,
   EvalBanValidator: () => new EvalBanValidator() as Plugin,
