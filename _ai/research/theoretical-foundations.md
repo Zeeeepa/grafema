@@ -126,6 +126,79 @@ The deeper insight: Grafema is building what Haskell's type system provides nati
 | Hoogle (search by type) | `find_nodes` (search by graph) |
 | Compiler rejects inconsistencies | `grafema check` rejects broken guarantees |
 
+## Cognitive Dimensions — Full Classification with Grafema Mapping
+
+### 14 Dimensions
+
+Each dimension = measurable property of a notation/tool. Each maps to concrete Grafema features.
+
+#### Already solved by Grafema
+
+| # | Dimension | Definition | Grafema feature | Metric |
+|---|-----------|-----------|-----------------|--------|
+| 1 | **Hidden Dependencies** | Important links not visible in notation | Edges = visible connections; `trace_dataflow`, `find_calls` | % of cross-file dependencies surfaced vs total |
+| 2 | **Visibility** | How easy to see needed components | `find_nodes`, `get_file_overview` — instant lookup | Time to find function definition: grep vs graph |
+| 3 | **Hard Mental Operations** | Operations requiring high cognitive effort | `trace_dataflow` = automated reasoning through N files | # of files human must mentally traverse vs 1 query |
+| 4 | **Role-Expressiveness** | How obvious is each element's purpose | Semantic roles on nodes (handler, middleware, factory) | % of nodes with meaningful semantic role metadata |
+| 5 | **Abstraction Gradient** | Available abstraction levels | Zoom: module → function → expression level | # of queryable abstraction levels |
+
+#### Partially solved
+
+| # | Dimension | Definition | Grafema feature | Metric |
+|---|-----------|-----------|-----------------|--------|
+| 6 | **Juxtaposability** | Comparing two parts side by side | Multi-node Datalog queries | # of comparison queries available |
+| 7 | **Viscosity** | Resistance to change | `find_calls` shows blast radius | Time to assess impact of change: manual vs graph |
+| 8 | **Progressive Evaluation** | Check incomplete results | Partial graph is already useful; `grafema check` on WIP | % of guarantees checkable on partial code |
+| 9 | **Error-Proneness** | Likelihood of mistakes | Guarantees catch violations pre-merge | # of violations caught by `grafema check` per sprint |
+| 10 | **Closeness of Mapping** | Notation proximity to problem domain | Domain plugins (Express routes, React components) | % of domain concepts represented in graph vs only in code |
+
+#### Future opportunities
+
+| # | Dimension | Definition | Potential Grafema feature | Metric |
+|---|-----------|-----------|--------------------------|--------|
+| 11 | **Premature Commitment** | Forced decisions before info available | "Show how similar projects solved this" via graph patterns | # of reference patterns available for decision |
+| 12 | **Consistency** | Similar semantics in similar syntax | Detect "same thing written differently" | # of inconsistent patterns found |
+| 13 | **Diffuseness** | Verbosity of notation | Graph shows essence, not boilerplate | Compression ratio: code lines vs graph nodes |
+| 14 | **Secondary Notation** | Extra meaning beyond formal (comments, naming) | Analyze naming conventions, comment patterns | % of naming conventions detected and classified |
+
+### Supporting Cognitive Theories
+
+**Beacons** (Brooks, 1983) — key code features that trigger instant comprehension. `app.get('/users', handler)` = "REST endpoint". Grafema domain plugins recognize beacons and label them in the graph.
+
+**Plans and Goals** (Soloway & Ehrlich, 1984) — programmers understand code through stereotypical patterns: "accumulator pattern", "guard clause", "factory". Grafema could detect and label these.
+
+**Information Foraging** (Pirolli & Card, 1999) — developers hunt for information following "information scent". Graph = map with direct paths instead of wandering.
+
+**The Programmer's Brain** (Felienne Hermans, 2021) — three types of cognitive load:
+- **Intrinsic** — task complexity itself (unavoidable)
+- **Extraneous** — tool/environment complexity (Grafema reduces this)
+- **Germane** — effort building mental model (Grafema pre-builds this)
+
+**Grafema pre-builds the mental model (germane load) and eliminates tool friction (extraneous load), leaving developers to focus on intrinsic complexity only.**
+
+### Product Implications
+
+Each Cognitive Dimension = user story template:
+
+```
+As a developer working on a large codebase,
+I want to [DIMENSION verb],
+so that I can [reduce cognitive load / work faster / make fewer mistakes].
+
+Examples:
+- "I want to SEE all hidden dependencies of this module" (Hidden Dependencies)
+- "I want to COMPARE two API handlers side by side" (Juxtaposability)
+- "I want to TRACE data flow from input to database" (Hard Mental Operations)
+- "I want to KNOW the blast radius before refactoring" (Viscosity)
+- "I want to SEE this code at business-domain level" (Closeness of Mapping)
+```
+
+Each can be measured before/after Grafema adoption:
+- Time to complete task (seconds)
+- Accuracy of understanding (% correct answers about code)
+- Number of files opened (proxy for cognitive load)
+- Confidence rating (developer self-report)
+
 ## Reading List (prioritized)
 
 1. **Cognitive Dimensions of Notations** — Green & Petre (1996). Short, readable, directly applicable.
