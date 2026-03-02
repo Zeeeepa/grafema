@@ -17,8 +17,8 @@ describe('ExportEntityLinker', () => {
     return { backend: db.backend, db };
   }
 
-  describe('Named exports', () => {
-    it('should create EXPORTS edge for named function export', async () => {
+  describe('Named exports (skipped — handled by core-v2)', () => {
+    it('should skip named function export (core-v2 creates EXPORTS edge)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
@@ -31,16 +31,14 @@ describe('ExportEntityLinker', () => {
         const enricher = new ExportEntityLinker();
         const result = await enricher.execute({ graph: backend });
 
-        assert.strictEqual(result.created.edges, 1);
-        const edges = await backend.getOutgoingEdges('exp-foo', ['EXPORTS']);
-        assert.strictEqual(edges.length, 1);
-        assert.strictEqual(edges[0].dst, 'fn-foo');
+        assert.strictEqual(result.created.edges, 0);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }
     });
 
-    it('should create EXPORTS edge for named const export', async () => {
+    it('should skip named const export (core-v2 creates EXPORTS edge)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
@@ -53,16 +51,14 @@ describe('ExportEntityLinker', () => {
         const enricher = new ExportEntityLinker();
         const result = await enricher.execute({ graph: backend });
 
-        assert.strictEqual(result.created.edges, 1);
-        const edges = await backend.getOutgoingEdges('exp-x', ['EXPORTS']);
-        assert.strictEqual(edges.length, 1);
-        assert.strictEqual(edges[0].dst, 'var-x');
+        assert.strictEqual(result.created.edges, 0);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }
     });
 
-    it('should create EXPORTS edge for named class export', async () => {
+    it('should skip named class export (core-v2 creates EXPORTS edge)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
@@ -75,18 +71,16 @@ describe('ExportEntityLinker', () => {
         const enricher = new ExportEntityLinker();
         const result = await enricher.execute({ graph: backend });
 
-        assert.strictEqual(result.created.edges, 1);
-        const edges = await backend.getOutgoingEdges('exp-Foo', ['EXPORTS']);
-        assert.strictEqual(edges.length, 1);
-        assert.strictEqual(edges[0].dst, 'cls-Foo');
+        assert.strictEqual(result.created.edges, 0);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }
     });
   });
 
-  describe('Export specifiers', () => {
-    it('should create EXPORTS edge for { x } specifier', async () => {
+  describe('Export specifiers (skipped — handled by core-v2)', () => {
+    it('should skip { x } specifier (core-v2 creates EXPORTS edge)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
@@ -99,16 +93,14 @@ describe('ExportEntityLinker', () => {
         const enricher = new ExportEntityLinker();
         const result = await enricher.execute({ graph: backend });
 
-        assert.strictEqual(result.created.edges, 1);
-        const edges = await backend.getOutgoingEdges('exp-x', ['EXPORTS']);
-        assert.strictEqual(edges.length, 1);
-        assert.strictEqual(edges[0].dst, 'var-x');
+        assert.strictEqual(result.created.edges, 0);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }
     });
 
-    it('should create EXPORTS edge for { x as y } using local field', async () => {
+    it('should skip { x as y } specifier (core-v2 creates EXPORTS edge)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
@@ -121,18 +113,16 @@ describe('ExportEntityLinker', () => {
         const enricher = new ExportEntityLinker();
         const result = await enricher.execute({ graph: backend });
 
-        assert.strictEqual(result.created.edges, 1);
-        const edges = await backend.getOutgoingEdges('exp-y', ['EXPORTS']);
-        assert.strictEqual(edges.length, 1);
-        assert.strictEqual(edges[0].dst, 'fn-x');
+        assert.strictEqual(result.created.edges, 0);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }
     });
   });
 
-  describe('Default exports', () => {
-    it('should create EXPORTS edge for default export with local name', async () => {
+  describe('Default exports (skipped — handled by core-v2)', () => {
+    it('should skip default export with local name (core-v2 creates EXPORTS edge)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
@@ -145,16 +135,14 @@ describe('ExportEntityLinker', () => {
         const enricher = new ExportEntityLinker();
         const result = await enricher.execute({ graph: backend });
 
-        assert.strictEqual(result.created.edges, 1);
-        const edges = await backend.getOutgoingEdges('exp-default', ['EXPORTS']);
-        assert.strictEqual(edges.length, 1);
-        assert.strictEqual(edges[0].dst, 'fn-foo');
+        assert.strictEqual(result.created.edges, 0);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }
     });
 
-    it('should use line-based fallback for anonymous default export', async () => {
+    it('should skip anonymous default export (core-v2 creates EXPORTS edge)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
@@ -167,25 +155,21 @@ describe('ExportEntityLinker', () => {
         const enricher = new ExportEntityLinker();
         const result = await enricher.execute({ graph: backend });
 
-        assert.strictEqual(result.created.edges, 1);
-        const edges = await backend.getOutgoingEdges('exp-default', ['EXPORTS']);
-        assert.strictEqual(edges.length, 1);
-        assert.strictEqual(edges[0].dst, 'fn-anon');
+        assert.strictEqual(result.created.edges, 0);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }
     });
   });
 
-  describe('Scope correctness', () => {
-    it('should only match module-level entities, not inner variables', async () => {
+  describe('Scope correctness (skipped — handled by core-v2)', () => {
+    it('should skip local export regardless of scope complexity (core-v2 handles it)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
           { id: 'mod-a', type: 'MODULE', name: 'a.js', file: 'a.js', line: 1 },
-          // Module-level function 'x' (no parentScopeId)
           { id: 'fn-x', type: 'FUNCTION', name: 'x', file: 'a.js', line: 1 },
-          // Inner variable 'x' inside some function (has parentScopeId)
           { id: 'var-x-inner', type: 'VARIABLE_DECLARATION', name: 'x', file: 'a.js', line: 5, parentScopeId: 'scope-outer' },
           { id: 'exp-x', type: 'EXPORT', name: 'x', file: 'a.js', line: 10, exportType: 'named' },
         ]);
@@ -194,10 +178,8 @@ describe('ExportEntityLinker', () => {
         const enricher = new ExportEntityLinker();
         const result = await enricher.execute({ graph: backend });
 
-        assert.strictEqual(result.created.edges, 1);
-        const edges = await backend.getOutgoingEdges('exp-x', ['EXPORTS']);
-        assert.strictEqual(edges.length, 1);
-        assert.strictEqual(edges[0].dst, 'fn-x', 'Should link to module-level entity, not inner variable');
+        assert.strictEqual(result.created.edges, 0);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }
@@ -295,8 +277,8 @@ describe('ExportEntityLinker', () => {
     });
   });
 
-  describe('TypeScript exports', () => {
-    it('should create EXPORTS edge for interface export', async () => {
+  describe('TypeScript exports (skipped — handled by core-v2)', () => {
+    it('should skip interface export (core-v2 creates EXPORTS edge)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
@@ -309,16 +291,14 @@ describe('ExportEntityLinker', () => {
         const enricher = new ExportEntityLinker();
         const result = await enricher.execute({ graph: backend });
 
-        assert.strictEqual(result.created.edges, 1);
-        const edges = await backend.getOutgoingEdges('exp-Foo', ['EXPORTS']);
-        assert.strictEqual(edges.length, 1);
-        assert.strictEqual(edges[0].dst, 'iface-Foo');
+        assert.strictEqual(result.created.edges, 0);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }
     });
 
-    it('should create EXPORTS edge for type alias export', async () => {
+    it('should skip type alias export (core-v2 creates EXPORTS edge)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
@@ -331,16 +311,14 @@ describe('ExportEntityLinker', () => {
         const enricher = new ExportEntityLinker();
         const result = await enricher.execute({ graph: backend });
 
-        assert.strictEqual(result.created.edges, 1);
-        const edges = await backend.getOutgoingEdges('exp-Bar', ['EXPORTS']);
-        assert.strictEqual(edges.length, 1);
-        assert.strictEqual(edges[0].dst, 'type-Bar');
+        assert.strictEqual(result.created.edges, 0);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }
     });
 
-    it('should create EXPORTS edge for enum export', async () => {
+    it('should skip enum export (core-v2 creates EXPORTS edge)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
@@ -353,18 +331,16 @@ describe('ExportEntityLinker', () => {
         const enricher = new ExportEntityLinker();
         const result = await enricher.execute({ graph: backend });
 
-        assert.strictEqual(result.created.edges, 1);
-        const edges = await backend.getOutgoingEdges('exp-Dir', ['EXPORTS']);
-        assert.strictEqual(edges.length, 1);
-        assert.strictEqual(edges[0].dst, 'enum-Dir');
+        assert.strictEqual(result.created.edges, 0);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }
     });
   });
 
-  describe('Graceful handling', () => {
-    it('should skip when no matching entity found without crashing', async () => {
+  describe('Graceful handling (skipped — handled by core-v2)', () => {
+    it('should skip local export even when no entity exists (core-v2 handles resolution)', async () => {
       const { backend } = await setupBackend();
       try {
         await backend.addNodes([
@@ -378,7 +354,7 @@ describe('ExportEntityLinker', () => {
         const result = await enricher.execute({ graph: backend });
 
         assert.strictEqual(result.created.edges, 0);
-        assert.strictEqual(result.metadata.notFound, 1);
+        assert.strictEqual(result.metadata.skipped, 1);
       } finally {
         await backend.close();
       }

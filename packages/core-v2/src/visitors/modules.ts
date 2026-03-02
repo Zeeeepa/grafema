@@ -277,20 +277,40 @@ export function visitExportDefaultDeclaration(
   node: Node, _parent: Node | null, ctx: WalkContext,
 ): VisitResult {
   const line = node.loc?.start.line ?? 0;
+  const column = node.loc?.start.column ?? 0;
   const nodeId = ctx.nodeId('EXPORT', 'default', line);
-  return {
+
+  const result: VisitResult = {
     nodes: [{
       id: nodeId,
       type: 'EXPORT',
       name: 'default',
       file: ctx.file,
       line,
-      column: node.loc?.start.column ?? 0,
+      column,
       exported: true,
     }],
     edges: [],
     deferred: [],
   };
+
+  // When declaration is an Identifier (e.g. `export default someVar`),
+  // no child graph node is created — edge-map can't fire.
+  // Emit export_lookup deferred to resolve the identifier to its declaration.
+  const decl = (node as { declaration?: Node }).declaration;
+  if (decl?.type === 'Identifier') {
+    result.deferred.push({
+      kind: 'export_lookup',
+      name: (decl as { name: string }).name,
+      fromNodeId: nodeId,
+      edgeType: 'EXPORTS',
+      file: ctx.file,
+      line,
+      column,
+    });
+  }
+
+  return result;
 }
 
 // ─── ExportAllDeclaration ────────────────────────────────────────────

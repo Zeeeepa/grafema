@@ -203,6 +203,9 @@ export const EDGE_MAP: Record<string, EdgeMapping> = {
   // ─── TS call signature ────────────────────────────────────
   'TSCallSignatureDeclaration.typeAnnotation': { edgeType: 'RETURNS_TYPE' },
 
+  // ─── Export default ──────────────────────────────────────
+  'ExportDefaultDeclaration.declaration': { edgeType: 'EXPORTS' },
+
   // ─── Function params ──────────────────────────────────────
   'FunctionDeclaration.params':      { edgeType: 'RECEIVES_ARGUMENT' },
   'FunctionExpression.params':       { edgeType: 'RECEIVES_ARGUMENT' },
