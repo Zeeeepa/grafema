@@ -313,6 +313,64 @@ Target venues and partners for comprehension studies:
 
 Win-win: they get a publication venue, Grafema gets peer-reviewed evidence.
 
+## LLM as Cognitive Proxy — Cheap Reproducible Benchmark
+
+### Why LLMs are valid test subjects
+
+LLMs suffer from the same comprehension constraints as humans — just named differently:
+
+| Human problem | LLM equivalent |
+|--------------|----------------|
+| Working memory limit | Context window limit |
+| Hidden dependencies invisible | Must read N files to find connection |
+| Hard mental operation | Long chain-of-thought, high token cost |
+| Navigation overhead | Multiple tool calls to find right file |
+| Information overload | Context pollution, accuracy drops |
+
+Grafema solves the SAME problems for LLMs as for humans: instead of 15 Read calls → one `trace_dataflow`.
+
+### Measurable metrics on LLM
+
+| Metric | How to measure | Human analogue |
+|--------|---------------|----------------|
+| Tokens to answer | Total tokens consumed | Time to comprehend |
+| Tool calls count | # of Read/Grep/Glob needed | Files opened (navigation) |
+| Accuracy | Verifiable correctness of answer | Answer accuracy |
+| Context consumed | Bytes of file content loaded | Cognitive load proxy |
+| Hallucination rate | % factually wrong statements about code | Misunderstanding rate |
+
+### Experiment design: Grafema Comprehension Benchmark
+
+```
+Setup:
+  - 5 open-source JS projects (10k-100k lines)
+  - 20 verifiable questions per project
+  - Same model (e.g., Claude Sonnet for cost efficiency)
+
+Run A: LLM + Read/Grep/Glob (standard file-based)
+Run B: LLM + Grafema MCP tools (graph-first)
+
+Question types (map to Cognitive Dimensions):
+  1. "What function handles /api/users POST?"          → Visibility
+  2. "Trace data from req.body to database"             → Hard Mental Operations
+  3. "What breaks if we rename UserService?"             → Viscosity / Hidden Deps
+  4. "List all side effects of processOrder()"           → Hidden Dependencies
+  5. "How does error handling flow in auth module?"      → Abstraction Gradient
+
+Measure per question:
+  - tool_calls_count  (navigation efficiency)
+  - tokens_consumed   (comprehension effort)
+  - correct: bool     (accuracy, verified by human)
+  - time_ms           (wall clock)
+```
+
+### Strategic value
+
+LLM benchmark = **preview** for human study. Pitch to ICPC/PPIG:
+"LLM benchmark showed 3x improvement on comprehension tasks. Want to reproduce on humans? We provide tool + infrastructure, you design study + publish."
+
+Builds on existing SWE-bench experiment infrastructure (see `_ai/swe-bench-runbook.md`).
+
 ## Reading List (prioritized)
 
 1. **Cognitive Dimensions of Notations** — Green & Petre (1996). Short, readable, directly applicable.
