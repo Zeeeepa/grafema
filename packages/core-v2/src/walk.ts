@@ -294,7 +294,7 @@ export async function walkFile(
 
   // ─── Recursive walk with auto scope-pop ──────────────────────────
 
-  function visit(node: Node, parent: Node | null, parentNodeId: string, edgeType: string = 'CONTAINS', edgeMetadata?: Record<string, unknown>): void {
+  function visit(node: Node, parent: Node | null, parentNodeId: string, edgeType: string = 'CONTAINS', edgeMetadata?: Record<string, unknown>, secondaryParentId?: string): void {
     const visitor = registry[node.type];
     if (!visitor) {
       const loc = node.loc?.start;
@@ -329,6 +329,16 @@ export async function walkFile(
         type: edgeType,
         ...(edgeMetadata ? { metadata: edgeMetadata } : {}),
       });
+      // Secondary CONTAINS from actual parent when srcFrom redirected
+      // the primary edge to a different source (e.g., enclosingFunction).
+      // This keeps the parent→child chain traversable for data flow analysis.
+      if (secondaryParentId) {
+        allEdges.push({
+          src: secondaryParentId,
+          dst: result.nodes[0].id,
+          type: 'CONTAINS',
+        });
+      }
     }
 
     // Track enclosing function/class for srcFrom resolution
@@ -376,6 +386,11 @@ export async function walkFile(
 
       let childEdgeType: string;
       let edgeSrc: string;
+      // When srcFrom redirects the edge source away from the actual parent,
+      // pass the actual parent ID so a secondary CONTAINS edge is also created.
+      // This keeps parent→child chains traversable for data flow analysis
+      // (e.g., EXPRESSION(await) → CONTAINS → argument).
+      let secondaryId: string | undefined;
 
       if (mapping) {
         // Explicit edge map entry — always use it
@@ -391,6 +406,10 @@ export async function walkFile(
             : childParentId;
         } else if (mapping.srcFrom === 'grandparent') {
           edgeSrc = parentNodeId;
+        }
+        // Create secondary CONTAINS from actual parent when source was redirected
+        if (mapping.srcFrom && thisNodeId && edgeSrc !== childParentId) {
+          secondaryId = childParentId;
         }
       } else if (isPassthrough) {
         // No mapping + passthrough: propagate incoming edge type and source
@@ -413,11 +432,11 @@ export async function walkFile(
             } else if (childEdgeType === 'RECEIVES_ARGUMENT') {
               itemMetadata = { paramIndex: i };
             }
-            visit(item as Node, node, edgeSrc, childEdgeType, itemMetadata);
+            visit(item as Node, node, edgeSrc, childEdgeType, itemMetadata, secondaryId);
           }
         }
       } else if (val && typeof val === 'object' && 'type' in val) {
-        visit(val as Node, node, edgeSrc, childEdgeType);
+        visit(val as Node, node, edgeSrc, childEdgeType, undefined, secondaryId);
       }
     }
 

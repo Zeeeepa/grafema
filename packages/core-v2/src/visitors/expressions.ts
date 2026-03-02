@@ -682,8 +682,8 @@ export function visitAssignmentExpression(
       computed: member.computed,
     };
 
-    // For this.X patterns, store classId for post-walk ASSIGNS_TO resolution
-    if (objName === 'this' && ctx.enclosingClassId) {
+    // For this.X and super.X patterns, store classId for ASSIGNS_TO resolution
+    if ((objName === 'this' || objName === 'super') && ctx.enclosingClassId) {
       metadata.classId = ctx.enclosingClassId;
     }
 

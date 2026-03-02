@@ -20,6 +20,7 @@ import { NodejsBuiltinsResolver } from '@grafema/core';
 import { RejectionPropagationEnricher } from '@grafema/core';
 import { CallbackCallResolver } from '@grafema/core';
 import { ExportEntityLinker } from '@grafema/core';
+import { PropertyAssignmentResolver } from '@grafema/core';
 
 /**
  * Create Orchestrator for tests
@@ -54,6 +55,8 @@ export function createTestOrchestrator(backend, options = {}) {
     plugins.push(new CallbackCallResolver());
     // REG-579: Export entity resolution
     plugins.push(new ExportEntityLinker());
+    // REG-594: Property assignment resolution (non-this ASSIGNS_TO)
+    plugins.push(new PropertyAssignmentResolver());
   }
 
   // Extra plugins
