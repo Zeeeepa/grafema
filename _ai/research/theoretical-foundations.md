@@ -199,6 +199,120 @@ Each can be measured before/after Grafema adoption:
 - Number of files opened (proxy for cognitive load)
 - Confidence rating (developer self-report)
 
+## Evidence Base: Where These Theories Are Used in Industry
+
+### Abstract Interpretation — FAANG Production
+
+- **Facebook/Meta — Infer**: Static analyzer based on Abstract Interpretation. Runs on EVERY commit in Facebook mobile apps. 80% accuracy, thousands of bugs caught pre-production. Open source. Paper: [Scaling Static Analyses at Facebook (CACM 2019)](https://dl.acm.org/doi/abs/10.1145/3338112)
+- **Facebook — SPARTA**: [Open-source library](https://github.com/facebook/SPARTA) for building industrial-grade analyzers on Abstract Interpretation. Powers ReDex (Android bytecode optimizer).
+- **Airbus — Astrée**: Abstract Interpretation for flight software verification. Mathematically proves absence of runtime errors in airplane code.
+
+### Cognitive Dimensions — Product Design
+
+- **Microsoft .NET**: Used CD framework to evaluate class library usability. Found issues → redesigned API → measured improvement in second study. Paper: [Using CD Framework to Evaluate Class Library Usability (PPIG 2003)](https://www.ppig.org/files/2003-PPIG-15th-clarke.pdf)
+- **Visual Studio, Eclipse**: CD framework used for IDE evaluation. Led to concrete recommendations (e.g., "high Viscosity → need automated refactoring tools").
+- **Programming languages** (Haskell, Visual Basic, LabVIEW): Evaluated through CD, producing formal trade-off tables. Paper: [Usability Analysis of Visual Programming (Green & Petre)](https://web.engr.oregonstate.edu/~burnett/CS589and584/CS589-papers/CogDimsPaper.pdf)
+
+### Program Comprehension — The Key Number
+
+**Developers spend 58% of their time on code comprehension** — not writing, not debugging, just UNDERSTANDING code. From [large-scale field study with professionals](https://baolingfeng.github.io/papers/tsecomprehension.pdf).
+
+```
+Average developer time distribution:
+  58%  — Program Comprehension (understanding code)
+  24%  — Navigation (finding the right file/function)
+  13%  — Other
+   5%  — Editing (actually writing code)
+```
+
+Implication: a tool that speeds up comprehension by 30% saves **17% of total developer work time**. For a team of 50 developers = 8.5 FTE saved. Direct ROI for CTO.
+
+### Cognitive Load Measurement — Established Methods
+
+[Systematic mapping study](https://dl.acm.org/doi/abs/10.1109/ICPC.2019.00018) analyzed 4,175 articles → 63 primary studies on measuring developer cognitive load:
+- 55% used EEG (electroencephalogram)
+- 51% applied ML classification for predicting cognitive load
+- 83% measured during programming tasks
+- Self-report scales (NASA-TLX) widely used as lightweight alternative
+
+## Metrics for Grafema — Measurable Impact
+
+### Established Metrics (from literature)
+
+| Metric | How to measure | What it proves | Source |
+|--------|---------------|----------------|--------|
+| Task completion time | Seconds to answer "what does this code do?" | Comprehension speed | ICPC papers |
+| Navigation count | # files opened to answer a question about code | Search efficiency | Program comprehension studies |
+| Answer accuracy | % correct answers about dependencies, data flow | Understanding quality | Hidden Dependencies dimension |
+| Cognitive load | NASA-TLX self-report scale (1-21 per subscale) | Mental effort reduction | Cognitive load theory |
+| Onboarding time | Days until first productive commit | New developer ramp-up | Industry standard |
+| Blast radius accuracy | Can developer correctly identify all affected files? | Change impact awareness | Viscosity dimension |
+
+### A/B Study Design for Grafema
+
+```
+Setup:
+  - 20+ developers (mixed experience levels)
+  - Large unfamiliar JS codebase (50k+ lines)
+  - 10 comprehension tasks of increasing difficulty
+
+Group A (control): IDE + grep + file reading
+Group B (test):    IDE + grep + Grafema MCP tools
+
+Tasks (examples):
+  1. "Find where user authentication is handled"          → Visibility
+  2. "What happens if this function throws?"               → Hidden Dependencies
+  3. "Trace data from API input to database write"         → Hard Mental Operations
+  4. "What will break if we change this interface?"         → Viscosity
+  5. "How does the order processing pipeline work?"        → Closeness of Mapping
+
+Measured:
+  - Time per task (seconds)
+  - Accuracy (% correct)
+  - Confidence (1-5 self-report)
+  - NASA-TLX cognitive load after each task
+  - Files opened (navigation efficiency)
+
+Expected results:
+  - 2-5x faster on dependency/trace tasks (Hidden Dependencies, Hard Mental Ops)
+  - Higher accuracy on cross-file questions
+  - Lower cognitive load scores
+  - Fewer files opened (graph queries vs. manual navigation)
+```
+
+### Competitive Positioning Through Evidence
+
+No competitor measures cognitive impact:
+- **CodeQL**: measures "vulnerabilities found"
+- **Semgrep**: measures "rules matched"
+- **Joern**: measures "query execution time"
+- **Grafema**: can measure "developer comprehension speed, accuracy, and cognitive load"
+
+This is a different conversation entirely. Not "we found 47 bugs" but "we reduced code comprehension time by 60% and onboarding by 3x, here's the peer-reviewed study."
+
+### Academic Partnership Strategy
+
+Target venues and partners for comprehension studies:
+
+**Conferences:**
+- ICPC (International Conference on Program Comprehension) — primary venue
+- PPIG (Psychology of Programming Interest Group) — CD framework community
+- ICSE (International Conference on Software Engineering) — top venue
+- ESEC/FSE — empirical software engineering
+- CHI — human-computer interaction (for cognitive load angle)
+
+**Research groups (program comprehension + cognitive load):**
+- TU Delft — Spoofax team (Eelco Visser's group), scope graphs, FlowSpec
+- Carnegie Mellon — software engineering + HCI intersection
+- Microsoft Research — developer productivity group (already measures dev time)
+- JetBrains Research — IDE usability, developer tools
+- University of Zurich — software evolution group
+
+**Pitch to academics:**
+"We have an open-source graph-based code analysis tool. We want to run controlled studies measuring cognitive impact using established metrics (CD framework, NASA-TLX, task completion time). We provide the tool + infrastructure. You design the study + publish the paper."
+
+Win-win: they get a publication venue, Grafema gets peer-reviewed evidence.
+
 ## Reading List (prioritized)
 
 1. **Cognitive Dimensions of Notations** — Green & Petre (1996). Short, readable, directly applicable.
