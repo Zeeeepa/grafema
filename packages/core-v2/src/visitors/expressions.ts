@@ -1235,6 +1235,8 @@ export function visitIdentifier(
   // Import/export specifiers — handled by their own visitors
   if (pt === 'ImportSpecifier' || pt === 'ImportDefaultSpecifier' || pt === 'ImportNamespaceSpecifier') return EMPTY_RESULT;
   if (pt === 'ExportSpecifier') return EMPTY_RESULT;
+  // export default <Identifier> — EXPORTS edge created by export_lookup deferred
+  if (pt === 'ExportDefaultDeclaration') return EMPTY_RESULT;
 
   // Function/method params — declarations, not reads
   if (pt === 'FunctionDeclaration' || pt === 'FunctionExpression' || pt === 'ArrowFunctionExpression' || pt === 'ClassMethod' || pt === 'ClassPrivateMethod' || pt === 'ObjectMethod') {

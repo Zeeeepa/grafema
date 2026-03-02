@@ -192,37 +192,10 @@ export class ExportEntityLinker extends Plugin {
           }
         }
       } else {
-        // Local export: find entity in same file
-        const entityName = exp.local ?? exp.name;
-
-        if (!entityName || !exp.file) {
-          skipped++;
-          continue;
-        }
-
-        let targetId: string | undefined;
-
-        if (entityName === 'default' || entityName === '*') {
-          // Default/anonymous export — line-based fallback
-          const fileLine = lineIndex.get(exp.file);
-          if (fileLine && exp.line !== undefined) {
-            targetId = fileLine.get(exp.line);
-          }
-        } else {
-          // Named entity lookup
-          const fileEntities = entityIndex.get(exp.file);
-          if (fileEntities) {
-            targetId = fileEntities.get(entityName);
-          }
-        }
-
-        if (targetId) {
-          await factory.link({ type: 'EXPORTS', src: exp.id, dst: targetId });
-          edgesCreated++;
-        } else {
-          notFound++;
-          logger.debug('No entity found for export', { name: entityName, file: exp.file, line: exp.line });
-        }
+        // Local exports: EXPORTS edges created by core-v2 walk engine
+        // (export_lookup deferred + EDGE_MAP). Skip to avoid duplicates.
+        skipped++;
+        continue;
       }
     }
 
