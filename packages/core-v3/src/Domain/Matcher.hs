@@ -73,6 +73,8 @@ applyMethodRule _lib rule callNodeId node = do
     , gnFile     = file
     , gnLine     = spanStart sp
     , gnColumn   = 0
+    , gnEndLine  = spanEnd sp
+    , gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "method" (MetaText (mrMethod rule))
     }
@@ -109,6 +111,8 @@ applyArgRule argRule argNode parentNodeId file = do
         , gnFile     = file
         , gnLine     = spanStart sp
         , gnColumn   = 0
+        , gnEndLine  = spanEnd sp
+        , gnEndColumn = 0
         , gnExported = False
         , gnMetadata = Map.empty
         }

@@ -61,6 +61,7 @@ ruleCallExpression node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "CALL", gnName = callee
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.empty
     }
@@ -115,6 +116,7 @@ ruleMemberExpression node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "PROPERTY_ACCESS", gnName = propName
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "computed" (MetaBool computed)
     }
@@ -177,6 +179,7 @@ ruleArrowFunction node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "FUNCTION", gnName = "<" <> kind <> ">"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.fromList
         [ ("async", MetaBool isAsync)
@@ -206,6 +209,7 @@ ruleIdentifier node = do
   emitNode GraphNode
     { gnId = refId, gnType = "REFERENCE", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
 
@@ -234,6 +238,7 @@ ruleThisExpression node = do
   emitNode GraphNode
     { gnId = refId, gnType = "REFERENCE", gnName = "this"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
 
@@ -252,6 +257,7 @@ ruleSuperExpression node = do
   emitNode GraphNode
     { gnId = refId, gnType = "REFERENCE", gnName = "super"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
 
@@ -290,6 +296,7 @@ ruleLiteral node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "LITERAL", gnName = raw
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   return (Just nodeId)
@@ -305,6 +312,7 @@ ruleObjectExpression node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "LITERAL", gnName = "<object>"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "kind" (MetaText "object")
     }
@@ -331,6 +339,7 @@ ruleArrayExpression node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "LITERAL", gnName = "<array>"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "kind" (MetaText "array")
     }
@@ -376,6 +385,7 @@ ruleTemplateLiteral node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "LITERAL", gnName = "<template>"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "kind" (MetaText "template")
     }
@@ -398,6 +408,7 @@ ruleConditionalExpression node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "BRANCH", gnName = "ternary"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.empty
     }
@@ -495,6 +506,7 @@ ruleNewExpression node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "CALL", gnName = callee
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "kind" (MetaText "new")
     }
@@ -543,6 +555,7 @@ ruleBinaryExpression node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "EXPRESSION", gnName = op
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "operator" (MetaText op)
     }
@@ -583,6 +596,7 @@ ruleLogicalExpression node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "EXPRESSION", gnName = op
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "operator" (MetaText op)
     }
@@ -623,6 +637,7 @@ ruleUnaryExpression node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "EXPRESSION", gnName = op
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "operator" (MetaText op)
     }
@@ -655,6 +670,7 @@ ruleTaggedTemplateExpression node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "CALL", gnName = tagName
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "kind" (MetaText "tagged_template")
     }
@@ -690,6 +706,7 @@ ruleImportExpression node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "CALL", gnName = "import"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "kind" (MetaText "dynamic_import")
     }
@@ -721,6 +738,7 @@ declareArrowParams file fnName fnNodeId parentNode (p:ps) bodyAction = do
   emitNode GraphNode
     { gnId = pId, gnType = "PARAMETER", gnName = pName
     , gnFile = file, gnLine = spanStart (astNodeSpan p), gnColumn = 0
+    , gnEndLine = spanEnd (astNodeSpan p), gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   emitEdge GraphEdge

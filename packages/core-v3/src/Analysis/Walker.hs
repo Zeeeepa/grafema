@@ -31,6 +31,8 @@ walkProgram node = do
     , gnFile     = file
     , gnLine     = 1
     , gnColumn   = 0
+    , gnEndLine  = 1
+    , gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.empty
     }

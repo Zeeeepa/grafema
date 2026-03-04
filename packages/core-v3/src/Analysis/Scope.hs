@@ -37,6 +37,8 @@ withScope kind scopeId' inner = do
     , gnFile     = file
     , gnLine     = 0
     , gnColumn   = 0
+    , gnEndLine  = 0
+    , gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "kind" (MetaText kindText)
     }

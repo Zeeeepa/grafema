@@ -52,6 +52,7 @@ ruleJSXOpeningElement node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "CALL", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "jsx" (MetaBool True)
     }

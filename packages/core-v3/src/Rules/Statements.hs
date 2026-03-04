@@ -75,6 +75,7 @@ ruleIfStatement node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "BRANCH", gnName = "if"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   case getChildrenMaybe "test" node of
@@ -109,6 +110,7 @@ ruleSwitchStatement node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "BRANCH", gnName = "switch"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   case getChildrenMaybe "discriminant" node of
@@ -137,6 +139,7 @@ ruleSwitchCase node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "CASE", gnName = "case"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
 
@@ -168,6 +171,7 @@ ruleForStatement node = do
   emitNode GraphNode
     { gnId = loopId, gnType = "LOOP", gnName = "for"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.singleton "kind" (MetaText "for")
     }
   withScope BlockScope loopId $ do
@@ -205,6 +209,7 @@ ruleForInOfStatement node = do
   emitNode GraphNode
     { gnId = loopId, gnType = "LOOP", gnName = "for-in-of"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.singleton "kind" (MetaText "for-in-of")
     }
   withScope BlockScope loopId $ do
@@ -234,6 +239,7 @@ ruleWhileStatement node = do
   emitNode GraphNode
     { gnId = loopId, gnType = "LOOP", gnName = "while"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.singleton "kind" (MetaText "while")
     }
   case getChildrenMaybe "test" node of
@@ -258,6 +264,7 @@ ruleTryStatement node = do
   emitNode GraphNode
     { gnId = tryId, gnType = "TRY_BLOCK", gnName = "try"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   case getChildrenMaybe "block" node of
@@ -270,6 +277,7 @@ ruleTryStatement node = do
       emitNode GraphNode
         { gnId = catchId, gnType = "CATCH_BLOCK", gnName = "catch"
         , gnFile = file, gnLine = spanStart hSp, gnColumn = 0
+        , gnEndLine = spanEnd hSp, gnEndColumn = 0
         , gnExported = False, gnMetadata = Map.empty
         }
       emitEdge GraphEdge { geSource = tryId, geTarget = catchId, geType = "HAS_CATCH", geMetadata = Map.empty }
@@ -282,6 +290,7 @@ ruleTryStatement node = do
       emitNode GraphNode
         { gnId = finId, gnType = "FINALLY_BLOCK", gnName = "finally"
         , gnFile = file, gnLine = spanStart fSp, gnColumn = 0
+        , gnEndLine = spanEnd fSp, gnEndColumn = 0
         , gnExported = False, gnMetadata = Map.empty
         }
       emitEdge GraphEdge { geSource = tryId, geTarget = finId, geType = "HAS_FINALLY", geMetadata = Map.empty }
@@ -322,6 +331,7 @@ ruleCatchClause node = do
       emitNode GraphNode
         { gnId = pId, gnType = "PARAMETER", gnName = pName
         , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+        , gnEndLine = spanEnd sp, gnEndColumn = 0
         , gnExported = False
         , gnMetadata = Map.singleton "kind" (MetaText "catch")
         }

@@ -26,6 +26,8 @@ import qualified Data.Binary as Binary
 import qualified Data.MessagePack as MP
 import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
+import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Lazy.Encoding as TLE
 import Data.Word (Word32)
 import qualified Data.Map.Strict as Map
 import qualified Data.ByteString.Lazy as BL
@@ -39,6 +41,12 @@ data PluginCommand
   | EmitEdge GraphEdge
   deriving (Show, Eq)
 
+-- | Encode a metadata map as a JSON-encoded string.
+-- The Rust orchestrator expects metadata as Option<String> (JSON string),
+-- not as a nested object.
+metaToJSONString :: Map.Map Text MetaValue -> Text
+metaToJSONString m = TL.toStrict (TLE.decodeUtf8 (encode (metaToJSON m)))
+
 instance ToJSON PluginCommand where
   toJSON (EmitNode n) = object $
     [ "type"     .= ("emit_node" :: Text)
@@ -50,14 +58,14 @@ instance ToJSON PluginCommand where
     , "column"   .= gnColumn n
     , "exported" .= gnExported n
     ] ++
-    [ "metadata" .= metaToJSON (gnMetadata n) | not (Map.null (gnMetadata n)) ]
+    [ "metadata" .= metaToJSONString (gnMetadata n) | not (Map.null (gnMetadata n)) ]
   toJSON (EmitEdge e) = object $
     [ "type" .= ("emit_edge" :: Text)
     , "src"  .= geSource e
     , "dst"  .= geTarget e
     , "edgeType" .= geType e
     ] ++
-    [ "metadata" .= metaToJSON (geMetadata e) | not (Map.null (geMetadata e)) ]
+    [ "metadata" .= metaToJSONString (geMetadata e) | not (Map.null (geMetadata e)) ]
 
 -- | Read NDJSON nodes from stdin.
 readNodesFromStdin :: IO [GraphNode]

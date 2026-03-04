@@ -38,6 +38,7 @@ ruleTSInterfaceDeclaration node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "INTERFACE", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   emitEdge GraphEdge
@@ -68,6 +69,7 @@ ruleTSTypeAliasDeclaration node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "TYPE_ALIAS", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   emitEdge GraphEdge
@@ -93,6 +95,7 @@ ruleTSEnumDeclaration node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "ENUM", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   emitEdge GraphEdge
@@ -124,6 +127,7 @@ ruleTSModuleDeclaration node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "NAMESPACE", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   emitEdge GraphEdge
@@ -177,6 +181,7 @@ ruleTSEnumMember node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "ENUM_MEMBER", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   case encClass of
@@ -206,6 +211,7 @@ ruleTSPropertySignature node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "PROPERTY_SIGNATURE", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   -- Walk type annotation if present
@@ -229,6 +235,7 @@ ruleTSMethodSignature node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "METHOD_SIGNATURE", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   -- Walk params

@@ -23,14 +23,16 @@ import qualified Data.Vector as V
 -- | Graph Primitives
 
 data GraphNode = GraphNode
-  { gnId       :: !Text
-  , gnType     :: !Text
-  , gnName     :: !Text
-  , gnFile     :: !Text
-  , gnLine     :: !Int     -- 1-based
-  , gnColumn   :: !Int     -- 0-based
-  , gnExported :: !Bool
-  , gnMetadata :: !(Map Text MetaValue)
+  { gnId        :: !Text
+  , gnType      :: !Text
+  , gnName      :: !Text
+  , gnFile      :: !Text
+  , gnLine      :: !Int     -- 1-based start line
+  , gnColumn    :: !Int     -- 0-based start column
+  , gnEndLine   :: !Int     -- 1-based end line (0 for virtual nodes)
+  , gnEndColumn :: !Int     -- 0-based end column (0 for virtual nodes)
+  , gnExported  :: !Bool
+  , gnMetadata  :: !(Map Text MetaValue)
   } deriving (Show, Eq)
 
 -- | Metadata values -- we support the same types as JSON
@@ -77,13 +79,15 @@ metaToJSON m
 
 instance ToJSON GraphNode where
   toJSON n = object $
-    [ "id"       .= gnId n
-    , "type"     .= gnType n
-    , "name"     .= gnName n
-    , "file"     .= gnFile n
-    , "line"     .= gnLine n
-    , "column"   .= gnColumn n
-    , "exported" .= gnExported n
+    [ "id"        .= gnId n
+    , "type"      .= gnType n
+    , "name"      .= gnName n
+    , "file"      .= gnFile n
+    , "line"      .= gnLine n
+    , "column"    .= gnColumn n
+    , "endLine"   .= gnEndLine n
+    , "endColumn" .= gnEndColumn n
+    , "exported"  .= gnExported n
     ] ++
     [ "metadata" .= metaToJSON (gnMetadata n) | not (Map.null (gnMetadata n)) ]
 
@@ -128,6 +132,8 @@ instance FromJSON GraphNode where
     <*> v .:  "file"
     <*> v .:  "line"
     <*> v .:  "column"
+    <*> v .:? "endLine"   .!= 0
+    <*> v .:? "endColumn" .!= 0
     <*> v .:  "exported"
     <*> v .:? "metadata" .!= Map.empty
 

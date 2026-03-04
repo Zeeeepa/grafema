@@ -126,14 +126,16 @@ isUnresolved n =
 -- | Build a virtual GLOBAL_DEFINITION node for a matched global.
 mkGlobalNode :: GlobalDef -> GraphNode
 mkGlobalNode def = GraphNode
-  { gnId       = "GLOBAL::" <> gdName def
-  , gnType     = "GLOBAL_DEFINITION"
-  , gnName     = gdName def
-  , gnFile     = "<runtime>"
-  , gnLine     = 0
-  , gnColumn   = 0
-  , gnExported = True
-  , gnMetadata = Map.fromList
+  { gnId        = "GLOBAL::" <> gdName def
+  , gnType      = "GLOBAL_DEFINITION"
+  , gnName      = gdName def
+  , gnFile      = "<runtime>"
+  , gnLine      = 0
+  , gnColumn    = 0
+  , gnEndLine   = 0
+  , gnEndColumn = 0
+  , gnExported  = True
+  , gnMetadata  = Map.fromList
       [ ("category", MetaText (showCategory (gdCategory def)))
       , ("kind",     MetaText (gdKind def))
       ]

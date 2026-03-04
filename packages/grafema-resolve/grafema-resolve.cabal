@@ -12,6 +12,8 @@ executable grafema-resolve
   other-modules:
     ImportResolution
     RuntimeGlobals
+    Builtins
+    CrossFileCalls
 
   build-depends:
     base                 >= 4.17 && < 5,

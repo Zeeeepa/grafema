@@ -6,7 +6,18 @@
 --
 -- The orchestrator pipes all relevant nodes: IMPORT, IMPORT_BINDING,
 -- EXPORT, EXPORT_BINDING, and exported declarations (FUNCTION, VARIABLE, etc.).
-module ImportResolution (run, resolveAll) where
+module ImportResolution
+  ( run, resolveAll
+  -- * Shared helpers for other resolvers
+  , ExportIndex, ExportEntry(..)
+  , buildExportIndex
+  , resolveModulePath
+  , isRelativeSpecifier
+  , findMatchingExport
+  , lookupMetaText
+  , extractImportSource
+  , extractImportedName
+  ) where
 
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
 import Grafema.Protocol (PluginCommand(..), readNodesFromStdin, writeCommandsToStdout)
@@ -163,12 +174,15 @@ isRelativeSpecifier s = "./" `T.isPrefixOf` s || "../" `T.isPrefixOf` s
 -- | Resolve a relative path against a directory.
 -- Example: resolveRelative "src/components" "./utils" -> "src/components/utils"
 --          resolveRelative "src/components" "../lib" -> "src/lib"
+--          resolveRelative "/abs/path" "./foo" -> "/abs/path/foo"
 resolveRelative :: Text -> Text -> Text
 resolveRelative dir specifier =
-  let parts = filter (not . T.null) $ T.splitOn "/" dir
+  let isAbsolute = "/" `T.isPrefixOf` dir
+      parts = filter (not . T.null) $ T.splitOn "/" dir
       specParts = filter (not . T.null) $ T.splitOn "/" specifier
       resolved = normalizeParts (parts ++ specParts)
-  in T.intercalate "/" resolved
+      joined = T.intercalate "/" resolved
+  in if isAbsolute then "/" <> joined else joined
 
 -- | Normalize path parts, resolving "." and "..".
 normalizeParts :: [Text] -> [Text]
@@ -181,17 +195,33 @@ normalizeParts = go []
     go acc (p : rest) = go (p : acc) rest
 
 -- | Generate candidate file paths for a resolved module path.
--- Tries the exact path, then with extensions, then as index files.
+-- Tries the exact path, then extension swaps (TS ESM: .js → .ts),
+-- then adding extensions, then index files.
 makeCandidates :: Text -> [Text]
 makeCandidates resolved =
   let extensions = [".js", ".ts", ".tsx", ".jsx"]
       -- If already has a known extension, try exact first
       exact = [resolved | hasKnownExtension resolved]
-      -- Try adding extensions
+      -- TS ESM convention: import './foo.js' → file is foo.ts/foo.tsx
+      -- Try swapping the extension for each alternative
+      swapped = concatMap (swapExtension resolved) extensions
+      -- Try adding extensions (for extensionless specifiers)
       withExt = [resolved <> ext | ext <- extensions]
       -- Try as directory with index file
       indexFiles = [resolved <> "/index" <> ext | ext <- extensions]
-  in exact ++ withExt ++ indexFiles
+  in exact ++ swapped ++ withExt ++ indexFiles
+
+-- | If the path ends with a known extension, replace it with the target extension.
+-- Returns empty list if the path doesn't end with a known extension or the
+-- result would be the same as the input.
+swapExtension :: Text -> Text -> [Text]
+swapExtension path newExt =
+  [ stripped <> newExt
+  | ext <- [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]
+  , ext `T.isSuffixOf` path
+  , let stripped = T.dropEnd (T.length ext) path
+  , stripped <> newExt /= path  -- skip if same as original
+  ]
 
 -- | Check if a path already has a known JS/TS extension.
 hasKnownExtension :: Text -> Bool

@@ -84,6 +84,8 @@ ruleVariableDeclarator node parentDecl = do
         , gnFile     = file
         , gnLine     = spanStart idSp  -- byte offset for now, orchestrator converts
         , gnColumn   = 0
+        , gnEndLine  = spanEnd idSp
+        , gnEndColumn = 0
         , gnExported = isExported
         , gnMetadata = Map.singleton "kind" (MetaText kind)
         }
@@ -131,6 +133,8 @@ ruleFunctionDeclaration node = do
     , gnFile     = file
     , gnLine     = spanStart (astNodeSpan node)
     , gnColumn   = 0
+    , gnEndLine  = spanEnd (astNodeSpan node)
+    , gnEndColumn = 0
     , gnExported = isExported
     , gnMetadata = Map.fromList
         [ ("async", MetaBool isAsync)
@@ -183,6 +187,7 @@ ruleClassDeclaration node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "CLASS", gnName = name
     , gnFile = file, gnLine = spanStart (astNodeSpan node), gnColumn = 0
+    , gnEndLine = spanEnd (astNodeSpan node), gnEndColumn = 0
     , gnExported = isExported, gnMetadata = Map.empty
     }
   emitEdge GraphEdge
@@ -228,6 +233,7 @@ ruleMethodDefinition node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "METHOD", gnName = name
     , gnFile = file, gnLine = spanStart (astNodeSpan node), gnColumn = 0
+    , gnEndLine = spanEnd (astNodeSpan node), gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "kind" (MetaText kind)
     }
@@ -264,6 +270,7 @@ rulePropertyDefinition node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "PROPERTY", gnName = name
     , gnFile = file, gnLine = spanStart (astNodeSpan node), gnColumn = 0
+    , gnEndLine = spanEnd (astNodeSpan node), gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "static" (MetaBool isStatic)
     }
@@ -305,6 +312,7 @@ ruleImportDeclaration node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "IMPORT", gnName = source
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.singleton "source" (MetaText source)
     }
@@ -343,6 +351,7 @@ ruleImportSpecifier node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "IMPORT_BINDING", gnName = localName
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.fromList
         [ ("importedName", MetaText importedName)
@@ -370,6 +379,7 @@ ruleImportDefaultSpecifier node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "IMPORT_BINDING", gnName = localName
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.fromList
         [ ("importedName", MetaText "default")
@@ -397,6 +407,7 @@ ruleImportNamespaceSpecifier node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "IMPORT_BINDING", gnName = localName
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
     , gnMetadata = Map.fromList
         [ ("importedName", MetaText "*")
@@ -421,6 +432,7 @@ ruleExportNamedDeclaration node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "EXPORT", gnName = "named"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = True, gnMetadata = Map.empty
     }
 
@@ -460,6 +472,7 @@ ruleExportDefaultDeclaration node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "EXPORT", gnName = "default"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = True, gnMetadata = Map.empty
     }
 
@@ -490,6 +503,7 @@ ruleExportAllDeclaration node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "EXPORT", gnName = "*:" <> source
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = True, gnMetadata = Map.empty
     }
 
@@ -527,6 +541,7 @@ ruleExportSpecifier node = do
   emitNode GraphNode
     { gnId = nodeId, gnType = "EXPORT_BINDING", gnName = localName
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = True
     , gnMetadata = case parent of
         Just src -> Map.fromList
@@ -555,6 +570,7 @@ declareParams file fnName fnNodeId parentNode (p:ps) bodyAction = do
   emitNode GraphNode
     { gnId = pId, gnType = "PARAMETER", gnName = pName
     , gnFile = file, gnLine = spanStart (astNodeSpan p), gnColumn = 0
+    , gnEndLine = spanEnd (astNodeSpan p), gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
   emitEdge GraphEdge
