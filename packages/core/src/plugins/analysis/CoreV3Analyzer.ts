@@ -133,7 +133,9 @@ export class CoreV3Analyzer extends Plugin {
         const analysis = this.runPipeline(parseScript, absPath, filePath);
 
         // Collect deferred refs for cross-file resolution
-        allUnresolvedRefs.push(...analysis.unresolvedRefs);
+        if (analysis.unresolvedRefs) {
+          allUnresolvedRefs.push(...analysis.unresolvedRefs);
+        }
 
         if (graph.beginBatch) graph.beginBatch();
 

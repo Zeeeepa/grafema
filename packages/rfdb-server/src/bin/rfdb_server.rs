@@ -5229,6 +5229,73 @@ mod protocol_tests {
         assert_eq!(count1, 2, "Should find 2 FUNCTIONs");
     }
 
+    /// Test that V2 engine (used by DatabaseManager) does NOT flush to disk
+    /// on each deferIndex=true CommitBatch. Data remains readable from write
+    /// buffers throughout, and RebuildIndexes persists everything.
+    #[test]
+    fn test_commit_batch_defer_index_v2_no_per_file_flush() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "v2_defer_noop");
+
+        // Send 10 deferred commits, verify data accessible after each
+        for i in 0..10 {
+            let file = format!("src/file_{i}.js");
+            let func_id = format!("f{i}");
+            let func_name = format!("func{i}");
+
+            let response = handle_request(&manager, &mut session, Request::CommitBatch {
+                changed_files: vec![file.clone()],
+                nodes: vec![
+                    WireNode {
+                        semantic_id: None,
+                        id: func_id.clone(),
+                        node_type: Some("FUNCTION".to_string()),
+                        name: Some(func_name),
+                        file: Some(file),
+                        exported: false,
+                        metadata: None,
+                    },
+                ],
+                edges: vec![],
+                tags: None,
+                file_context: None,
+                defer_index: true,
+                protected_types: vec![],
+            }, &None);
+
+            match response {
+                Response::BatchCommitted { ok, .. } => assert!(ok, "batch {i} should succeed"),
+                _ => panic!("Expected BatchCommitted for batch {i}, got {:?}", response),
+            }
+
+            // Data should be readable immediately (from write buffer)
+            let exists = handle_request(&manager, &mut session, Request::NodeExists {
+                id: func_id,
+            }, &None);
+            match exists {
+                Response::Bool { value } => assert!(value, "node f{i} should exist after deferred commit"),
+                _ => panic!("Expected Bool for NodeExists"),
+            }
+        }
+
+        // RebuildIndexes persists everything
+        let rebuild = handle_request(&manager, &mut session, Request::RebuildIndexes, &None);
+        match rebuild {
+            Response::Ok { ok } => assert!(ok),
+            _ => panic!("Expected Ok for RebuildIndexes"),
+        }
+
+        // All 10 nodes should be queryable after rebuild
+        let find = handle_request(&manager, &mut session, Request::FindByType {
+            node_type: "FUNCTION".to_string(),
+        }, &None);
+        match find {
+            Response::Ids { ids } => assert_eq!(ids.len(), 10, "All 10 deferred nodes should be findable after rebuild"),
+            _ => panic!("Expected Ids"),
+        }
+    }
+
     // ============================================================================
     // CommitBatch with protected_types (REG-489)
     // ============================================================================

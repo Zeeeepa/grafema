@@ -20,9 +20,9 @@ import Data.Foldable (forM_)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Analysis.Types
-import Analysis.Context (Analyzer, askFile, askEnclosingFn, askNamedParent, emitNode, emitEdge, withAncestor)
+import Analysis.Context (Analyzer, askFile, askEnclosingFn, askNamedParent, askScopeId, emitNode, emitEdge, withAncestor)
 import {-# SOURCE #-} Analysis.Walker (walkNode)
-import Analysis.Scope (withScope)
+import Analysis.Scope (withScope, declareInScope)
 import Analysis.SemanticId (semanticId, contentHash)
 import AST.Types
 import AST.Span (Span(..))
@@ -309,10 +309,28 @@ ruleExpressionStatement node = do
 
 ruleCatchClause :: ASTNode -> Analyzer (Maybe Text)
 ruleCatchClause node = do
+  file <- askFile
+  parent <- askNamedParent
+  let mkCatchBody = case getChildrenMaybe "body" node of
+        Just body -> withAncestor node (walkNode body) >> return ()
+        Nothing   -> return ()
   case getChildrenMaybe "param" node of
-    Just p  -> withAncestor node (walkNode p) >> return ()
-    Nothing -> return ()
-  case getChildrenMaybe "body" node of
-    Just body -> withAncestor node (walkNode body) >> return ()
-    Nothing   -> return ()
+    Just p -> do
+      let pName = getTextFieldOr "name" "<catch>" p
+          sp    = astNodeSpan p
+          pId   = semanticId file "PARAMETER" pName parent Nothing
+      emitNode GraphNode
+        { gnId = pId, gnType = "PARAMETER", gnName = pName
+        , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+        , gnExported = False
+        , gnMetadata = Map.singleton "kind" (MetaText "catch")
+        }
+      withScope CatchScope pId $ do
+        catchScopeId <- askScopeId
+        emitEdge GraphEdge
+          { geSource = catchScopeId, geTarget = pId
+          , geType = "DECLARES", geMetadata = Map.empty
+          }
+        declareInScope (Declaration pId DeclCatch pName) mkCatchBody
+    Nothing -> mkCatchBody
   return Nothing

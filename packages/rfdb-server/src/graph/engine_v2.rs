@@ -393,6 +393,9 @@ impl GraphStore for GraphEngineV2 {
             }
         }
         // If skip_validation, silently ignore errors
+
+        // Auto-flush: edges also contribute to buffer pressure
+        self.maybe_auto_flush();
     }
 
     fn delete_edge(&mut self, src: u128, dst: u128, edge_type: &str) {
@@ -532,6 +535,17 @@ impl GraphStore for GraphEngineV2 {
             let types_refs: Vec<&str> = edge_types_owned.iter().map(|s| s.as_str()).collect();
             self.neighbors(node_id, &types_refs)
         })
+    }
+
+    fn flush_data_only(&mut self) -> Result<()> {
+        // V2 uses in-memory write buffers with adaptive auto-flush
+        // (triggered by add_nodes via maybe_auto_flush).
+        // During bulk load (deferIndex=true), skip explicit flush —
+        // data is readable from write buffers, and auto-flush
+        // persists to disk when buffer limits are exceeded.
+        // The final rebuild_indexes() → flush() ensures all data
+        // is persisted at the end of the bulk load.
+        Ok(())
     }
 
     fn flush(&mut self) -> Result<()> {
@@ -1580,5 +1594,105 @@ mod tests {
         assert!(store.any_shard_needs_flush(usize::MAX, 1000));
         // A limit of 2000 should not trigger.
         assert!(!store.any_shard_needs_flush(usize::MAX, 2000));
+    }
+
+    // ── flush_data_only No-op ──────────────────────────────────────
+
+    #[test]
+    fn test_flush_data_only_is_noop_v2() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("noop_flush.rfdb");
+
+        let mut engine = GraphEngineV2::create(&db_path).unwrap();
+
+        // Add nodes and edges using blake3-derived IDs (required for segment writes)
+        let node_a = make_v2_node("FUNCTION:a@src/a.js", "FUNCTION", "a", "src/a.js");
+        let node_b = make_v2_node("FUNCTION:b@src/a.js", "FUNCTION", "b", "src/a.js");
+        let id_a = node_a.id;
+        let id_b = node_b.id;
+        engine.store.add_nodes(vec![node_a, node_b]);
+
+        engine.add_edges(vec![EdgeRecord {
+            src: id_a, dst: id_b,
+            edge_type: Some("CALLS".to_string()),
+            version: "main".to_string(),
+            metadata: None, deleted: false,
+        }], false);
+
+        // flush_data_only should be a no-op — no segments written
+        engine.flush_data_only().unwrap();
+
+        // Data still readable from write buffers
+        assert!(engine.node_exists(id_a));
+        assert!(engine.node_exists(id_b));
+        let outgoing = engine.get_outgoing_edges(id_a, None);
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].dst, id_b);
+
+        // Now flush() should actually persist
+        engine.flush().unwrap();
+
+        // Data still readable after real flush (from segments)
+        assert!(engine.node_exists(id_a));
+        assert!(engine.node_exists(id_b));
+        let outgoing = engine.get_outgoing_edges(id_a, None);
+        assert_eq!(outgoing.len(), 1);
+    }
+
+    #[test]
+    fn test_deferred_bulk_load_v2() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        // Simulate bulk load: 100 files, each with ~5 nodes
+        for file_idx in 0..100 {
+            let file = format!("src/file_{file_idx}.js");
+
+            // Delete old nodes for this file (simulate re-analysis)
+            let old_ids = engine.find_by_attr(
+                &AttrQuery { file: Some(file.clone()), ..AttrQuery::default() },
+            );
+            for id in old_ids {
+                engine.delete_node(id);
+            }
+
+            // Add new nodes
+            let mut nodes = Vec::new();
+            for node_idx in 0..5 {
+                let name = format!("fn_{file_idx}_{node_idx}");
+                nodes.push(make_v1_node(
+                    (file_idx * 1000 + node_idx) as u128,
+                    "FUNCTION",
+                    &name,
+                    &file,
+                ));
+            }
+            engine.add_nodes(nodes);
+
+            // flush_data_only is a no-op — should succeed
+            engine.flush_data_only().unwrap();
+
+            // All nodes for this file should be readable (from write buffer)
+            let found = engine.find_by_attr(
+                &AttrQuery { file: Some(file.clone()), ..AttrQuery::default() },
+            );
+            assert_eq!(
+                found.len(), 5,
+                "file {file_idx}: expected 5 nodes, found {}",
+                found.len()
+            );
+        }
+
+        // Total: 100 files * 5 nodes = 500 nodes
+        assert_eq!(engine.node_count(), 500);
+
+        // rebuild_indexes (which calls flush) should persist everything
+        engine.rebuild_indexes().unwrap();
+        assert_eq!(engine.node_count(), 500);
+
+        // Spot-check: random file's nodes are still there
+        let found = engine.find_by_attr(
+            &AttrQuery { file: Some("src/file_42.js".to_string()), ..AttrQuery::default() },
+        );
+        assert_eq!(found.len(), 5);
     }
 }

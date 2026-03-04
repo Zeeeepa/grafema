@@ -19,24 +19,46 @@ module Rules.Declarations
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Foldable (forM_)
 import qualified Data.Map.Strict as Map
 import Analysis.Types
 import Analysis.Context
 import {-# SOURCE #-} Analysis.Walker (walkNode)
-import Analysis.Scope (withScope)
+import Analysis.Scope (withScope, declareInScope)
 import Analysis.SemanticId (semanticId)
 import AST.Types
 import AST.Span (Span(..))
 
 -- ── Variable Declaration ────────────────────────────────────────────────
 
--- | VariableDeclaration: walk each declarator, passing down the kind (var/let/const)
+-- | VariableDeclaration: walk each declarator, passing down the kind (var/let/const).
+-- Uses a fold so each declarator is declared in scope for subsequent declarators.
 ruleVariableDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleVariableDeclaration node = do
   let decls = getChildren "declarations" node
-  mapM_ (\d -> withAncestor node (ruleVariableDeclarator d node)) decls
+      kind  = getTextFieldOr "kind" "let" node
+      dk = case kind of
+        "var"   -> DeclVar
+        "let"   -> DeclLet
+        "const" -> DeclConst
+        _       -> DeclLet
+  goDeclarators dk decls
   return Nothing
+  where
+    goDeclarators :: DeclKind -> [ASTNode] -> Analyzer ()
+    goDeclarators _ [] = return ()
+    goDeclarators dk (d:ds) = do
+      mNodeId <- withAncestor node (ruleVariableDeclarator d node)
+      case mNodeId of
+        Just nodeId -> do
+          let name = case getChildrenMaybe "id" d of
+                       Just idNode -> getTextFieldOr "name" "" idNode
+                       Nothing     -> ""
+          if T.null name
+            then goDeclarators dk ds
+            else declareInScope (Declaration nodeId dk name) (goDeclarators dk ds)
+        Nothing -> goDeclarators dk ds
 
 -- | VariableDeclarator: emit VARIABLE or CONSTANT node + DECLARES edge + ASSIGNED_FROM
 ruleVariableDeclarator :: ASTNode -> ASTNode -> Analyzer (Maybe Text)
@@ -129,29 +151,15 @@ ruleFunctionDeclaration node = do
     , geMetadata = Map.empty
     }
 
-  -- Walk params and body inside a function scope
-  withEnclosingFn nodeId $ withNamedParent name $ withScope FunctionScope nodeId $ do
-    let params = getChildren "params" node
-    mapM_ (\p -> do
-      let pName = getParamName p
-          pId   = semanticId file "PARAMETER" pName (Just name) Nothing
-      emitNode GraphNode
-        { gnId = pId, gnType = "PARAMETER", gnName = pName
-        , gnFile = file, gnLine = spanStart (astNodeSpan p), gnColumn = 0
-        , gnExported = False, gnMetadata = Map.empty
-        }
-      emitEdge GraphEdge
-        { geSource = nodeId, geTarget = pId
-        , geType = "RECEIVES_ARGUMENT", geMetadata = Map.empty
-        }
-      -- Walk param for defaults, destructuring, type annotations
-      withAncestor node (walkNode p) >> return ()
-      ) params
-
-    -- Walk body
-    case getChildrenMaybe "body" node of
-      Just body -> withAncestor node (walkNode body) >> return ()
-      Nothing -> return ()
+  -- Declare function name in parent scope, then walk params and body inside a function scope
+  let fnDecl = Declaration nodeId DeclFunction name
+  declareInScope fnDecl $
+    withEnclosingFn nodeId $ withNamedParent name $ withScope FunctionScope nodeId $ do
+      let params = getChildren "params" node
+          walkBody = case getChildrenMaybe "body" node of
+            Just body -> withAncestor node (walkNode body) >> return ()
+            Nothing   -> return ()
+      declareParams file name nodeId node params walkBody
 
   return (Just nodeId)
 
@@ -185,11 +193,13 @@ ruleClassDeclaration node = do
     , geType = "DECLARES", geMetadata = Map.empty
     }
 
-  -- Walk body in class scope
-  withEnclosingClass nodeId $ withNamedParent name $ withScope ClassScope nodeId $ do
-    case getChildrenMaybe "body" node of
-      Just body -> withAncestor node (walkNode body) >> return ()
-      Nothing -> return ()
+  -- Declare class name in parent scope, then walk body in class scope
+  let classDecl = Declaration nodeId DeclClass name
+  declareInScope classDecl $
+    withEnclosingClass nodeId $ withNamedParent name $ withScope ClassScope nodeId $ do
+      case getChildrenMaybe "body" node of
+        Just body -> withAncestor node (walkNode body) >> return ()
+        Nothing -> return ()
 
   return (Just nodeId)
 
@@ -295,10 +305,11 @@ ruleImportDeclaration node = do
     , gnMetadata = Map.singleton "source" (MetaText source)
     }
 
+  curScopeId <- askScopeId
   emitDeferred DeferredRef
     { drKind = ImportResolve, drName = source
     , drFromNodeId = nodeId, drEdgeType = "IMPORTS_FROM"
-    , drScopeId = Nothing, drSource = Just source
+    , drScopeId = Just curScopeId, drSource = Just source
     , drFile = file, drLine = spanStart sp, drColumn = 0
     , drReceiver = Nothing, drMetadata = Map.empty
     }
@@ -335,6 +346,7 @@ ruleImportSpecifier node = do
     { geSource = curScopeId, geTarget = nodeId
     , geType = "DECLARES", geMetadata = Map.empty
     }
+  declareInScope (Declaration nodeId DeclImport localName) (return ())
   return (Just nodeId)
 
 ruleImportDefaultSpecifier :: ASTNode -> Analyzer (Maybe Text)
@@ -358,6 +370,7 @@ ruleImportDefaultSpecifier node = do
     { geSource = curScopeId, geTarget = nodeId
     , geType = "DECLARES", geMetadata = Map.empty
     }
+  declareInScope (Declaration nodeId DeclImport localName) (return ())
   return (Just nodeId)
 
 ruleImportNamespaceSpecifier :: ASTNode -> Analyzer (Maybe Text)
@@ -381,6 +394,7 @@ ruleImportNamespaceSpecifier node = do
     { geSource = curScopeId, geTarget = nodeId
     , geType = "DECLARES", geMetadata = Map.empty
     }
+  declareInScope (Declaration nodeId DeclImport localName) (return ())
   return (Just nodeId)
 
 -- ── Export Declarations ─────────────────────────────────────────────────
@@ -401,11 +415,15 @@ ruleExportNamedDeclaration node = do
   case getChildrenMaybe "declaration" node of
     Just decl -> do
       mChildId <- withAncestor node (walkNode decl)
-      forM_ mChildId $ \childId ->
+      forM_ mChildId $ \childId -> do
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = childId
           , geType = "EXPORTS", geMetadata = Map.empty
           }
+        let exportName = getDeclName decl
+        emitExport ExportInfo
+          { eiName = exportName, eiNodeId = childId
+          , eiKind = NamedExport, eiSource = Nothing }
     Nothing -> return ()
 
   -- Walk specifiers
@@ -429,11 +447,14 @@ ruleExportDefaultDeclaration node = do
   case getChildrenMaybe "declaration" node of
     Just decl -> do
       mChildId <- withAncestor node (walkNode decl)
-      forM_ mChildId $ \childId ->
+      forM_ mChildId $ \childId -> do
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = childId
           , geType = "EXPORTS", geMetadata = Map.empty
           }
+        emitExport ExportInfo
+          { eiName = "default", eiNodeId = childId
+          , eiKind = DefaultExport, eiSource = Nothing }
     Nothing -> return ()
 
   return (Just nodeId)
@@ -453,14 +474,19 @@ ruleExportAllDeclaration node = do
     , gnExported = True, gnMetadata = Map.empty
     }
 
+  curScopeId <- askScopeId
   emitDeferred DeferredRef
     { drKind = ImportResolve, drName = source
     , drFromNodeId = nodeId
     , drEdgeType = "RE_EXPORTS"
-    , drScopeId = Nothing, drSource = Just source
+    , drScopeId = Just curScopeId, drSource = Just source
     , drFile = file, drLine = spanStart sp, drColumn = 0
     , drReceiver = Nothing, drMetadata = Map.empty
     }
+
+  emitExport ExportInfo
+    { eiName = "*", eiNodeId = nodeId
+    , eiKind = ReExport, eiSource = Just source }
 
   return (Just nodeId)
 
@@ -485,9 +511,40 @@ ruleExportSpecifier node = do
     , gnExported = True
     , gnMetadata = Map.singleton "exportedName" (MetaText exportedName)
     }
+
+  emitExport ExportInfo
+    { eiName = exportedName, eiNodeId = nodeId
+    , eiKind = NamedExport, eiSource = Nothing }
+
   return (Just nodeId)
 
 -- ── Helpers ─────────────────────────────────────────────────────────────
+
+-- | Process params with scope accumulation: each param is declared in scope
+-- for subsequent params and the body action.
+declareParams :: Text -> Text -> Text -> ASTNode -> [ASTNode] -> Analyzer () -> Analyzer ()
+declareParams _file _fnName _fnNodeId _parentNode [] bodyAction = bodyAction
+declareParams file fnName fnNodeId parentNode (p:ps) bodyAction = do
+  let pName = getParamName p
+      pId   = semanticId file "PARAMETER" pName (Just fnName) Nothing
+  curScopeId <- askScopeId
+  emitNode GraphNode
+    { gnId = pId, gnType = "PARAMETER", gnName = pName
+    , gnFile = file, gnLine = spanStart (astNodeSpan p), gnColumn = 0
+    , gnExported = False, gnMetadata = Map.empty
+    }
+  emitEdge GraphEdge
+    { geSource = fnNodeId, geTarget = pId
+    , geType = "RECEIVES_ARGUMENT", geMetadata = Map.empty
+    }
+  emitEdge GraphEdge
+    { geSource = curScopeId, geTarget = pId
+    , geType = "DECLARES", geMetadata = Map.empty
+    }
+  -- Walk param for defaults, destructuring, type annotations
+  withAncestor parentNode (walkNode p) >> return ()
+  declareInScope (Declaration pId DeclParam pName) $
+    declareParams file fnName fnNodeId parentNode ps bodyAction
 
 getParamName :: ASTNode -> Text
 getParamName node = case node of
@@ -501,3 +558,16 @@ getParamName node = case node of
       Just arg -> "..." <> getParamName arg
       Nothing  -> "<rest>"
   _ -> "<param>"
+
+-- | Extract the declared name from a declaration node (for export info).
+getDeclName :: ASTNode -> Text
+getDeclName decl = case getChildrenMaybe "id" decl of
+  Just idNode -> getTextFieldOr "name" "" idNode
+  Nothing -> case decl of
+    VariableDeclarationNode _ _ ->
+      case getChildren "declarations" decl of
+        (d:_) -> case getChildrenMaybe "id" d of
+          Just idNode -> getTextFieldOr "name" "" idNode
+          Nothing -> ""
+        [] -> ""
+    _ -> ""

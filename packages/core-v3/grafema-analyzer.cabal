@@ -21,6 +21,7 @@ executable grafema-analyzer
     Analysis.Scope
     Analysis.NodeId
     Analysis.SemanticId
+    Analysis.Resolve
     Output.Encode
     Rules.Declarations
     Rules.Expressions
@@ -41,7 +42,8 @@ executable grafema-analyzer
     containers     >= 0.6   && < 0.8,
     vector         >= 0.13  && < 0.14,
     unordered-containers >= 0.2 && < 0.3,
-    scientific     >= 0.3   && < 0.4
+    scientific     >= 0.3   && < 0.4,
+    grafema-common
 
 test-suite spec
   type:             exitcode-stdio-1.0
@@ -60,6 +62,7 @@ test-suite spec
     Analysis.Scope
     Analysis.NodeId
     Analysis.SemanticId
+    Analysis.Resolve
     Output.Encode
     Rules.Declarations
     Rules.Expressions
@@ -80,4 +83,6 @@ test-suite spec
     containers     >= 0.6   && < 0.8,
     vector         >= 0.13  && < 0.14,
     unordered-containers >= 0.2 && < 0.3,
-    scientific     >= 0.3   && < 0.4
+    scientific     >= 0.3   && < 0.4,
+    grafema-common,
+    hspec          >= 2.10  && < 2.12

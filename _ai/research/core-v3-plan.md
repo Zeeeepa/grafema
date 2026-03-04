@@ -1,7 +1,7 @@
 # Core v3: Haskell + Datalog Architecture
 
 **Status:** Research / Architecture Plan
-**Date:** 2026-03-03
+**Date:** 2026-03-03 (revised 2026-03-04 based on MLA findings)
 **Origin:** Analysis of core-v2 visitors, enrichers, and resolve.ts revealed that the current JS codebase naturally splits into three layers with distinct computational models.
 
 ## Problem
@@ -19,13 +19,15 @@ All three are in JS. Each has problems:
 
 ## Core Thesis
 
-**Three computational models → three languages.**
+**Each computation gets the right language.**
 
 | Layer | Computation | Current (JS) | v3 |
 |-------|------------|-------------|-----|
 | Per-file analysis | Pattern match + context | Visitor pattern + mutable stacks | **Haskell** (AG + Reader/Writer) |
-| Cross-file resolution | Joins + transitive closure | Imperative index building + BFS | **Datalog** (RFDB) |
-| Orchestration | I/O, filesystem, CLI | Node.js | **Node.js** (unchanged) |
+| Cross-file resolution | Language-specific joins | Imperative index building + BFS | **Haskell plugins** (DAG-ordered) |
+| Enrichment | Graph pattern matching | 15 ad hoc enricher plugins | **Haskell plugins** (streaming/batch) |
+| Orchestration | I/O, process management | Node.js | **Rust** (language-agnostic DAG runner) |
+| Queries + guarantees | Read-only graph queries | — | **Datalog** (existing top-down evaluator) |
 
 ## Architecture
 
@@ -34,64 +36,67 @@ Source files
     │
     ▼
 ┌─────────────────────────────────────────┐
-│ Phase 0: DISCOVER (JS)                  │
-│   glob → file list → MODULE nodes       │
+│ Phase 0: DISCOVER (Rust orchestrator)   │
+│   config-driven glob → MODULE nodes     │
 └─────────────────┬───────────────────────┘
                   │
     ┌─────────────┼─────────────┐
     │ per file:   │             │
     ▼             ▼             ▼
 ┌────────┐  ┌────────┐  ┌────────┐
-│ Babel  │  │ Babel  │  │ Babel  │    Phase 1a: PARSE
-│ parse  │  │ parse  │  │ parse  │    (JS, parallel)
-└───┬────┘  └───┬────┘  └───┬────┘
-    │           │           │
-    ▼           ▼           ▼
-┌────────┐  ┌────────┐  ┌────────┐
-│Haskell │  │Haskell │  │Haskell │    Phase 1b: ANALYZE
-│ binary │  │ binary │  │ binary │    (native, parallel)
+│  OXC   │  │  OXC   │  │  OXC   │    Phase 1: PER-FILE ANALYSIS
+│ parse  │  │ parse  │  │ parse  │    (parallel per file)
+│   +    │  │   +    │  │   +    │
+│Haskell │  │Haskell │  │Haskell │    OXC parse + Haskell analyze
+│analyze │  │analyze │  │analyze │    + postFile scope resolve
 └───┬────┘  └───┬────┘  └───┬────┘
     │           │           │
     └─────────┬─┘───────────┘
               │
+              ▼  (orchestrator ingests nodes + edges into RFDB)
+              │
               ▼
 ┌─────────────────────────────────────────┐
-│ Phase 1c: INGEST (RFDB)                │
-│   bulk insert nodes + edges + unresolved│
-└─────────────────┬───────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────┐
-│ Phase 2: RESOLVE (RFDB Datalog)         │
-│   import resolution                     │
-│   re-export chains (transitive closure) │
-│   transitive extends                    │
-│   arg-param binding                     │
-│   derived edges                         │
-│   domain rules (HTTP, Redis, WS)        │
-│   guarantees / validation               │
+│ Phase 2: PLUGINS (DAG-parallel)         │
+│   resolution plugins (depends_on: [])   │
+│     js-import-resolution                │
+│     runtime-globals                     │
+│   enrichment plugins                    │
+│     express-routes, react-components    │
+│   validation plugins                    │
+│     dangling-edges, guarantees          │
 └─────────────────────────────────────────┘
 ```
 
 ### What each language does
 
-**Babel (JS):** `source code → JSON AST`. One job. Best-in-class JS/TS parser.
+**OXC (Rust):** `source code → JSON AST`. Best-in-class JS/TS parser (10-100x faster than Babel). ESTree JSON format.
 
-**Haskell binary:** `JSON AST → FileAnalysis JSON`. Per-file, stateless, parallel.
-- Scope resolution (within file)
+**Haskell binary (per-file):** `JSON AST → FileAnalysis JSON`. Per-file, stateless, parallel.
 - Node + edge emission via Attribute Grammar rules
+- Intra-file scope resolution (postFile pass — resolves scope chain refs within the file)
+- REFERENCE nodes with `resolved: false` for unresolved identifiers
+- IMPORT_BINDING nodes for imports needing cross-file matching
 - Domain detection via LibraryDef (Express routes, Redis ops, Axios requests)
-- DeferredRef emission for cross-file references
-- Exhaustiveness guaranteed at compile time (253 AST types × all lenses)
+- Exhaustiveness guaranteed at compile time (~160 OXC ESTree types × all lenses)
 
-**RFDB Datalog:** All cross-file work. One-shot on complete fact set.
-- Import resolution, re-export chains
-- Transitive closure (EXTENDS, DERIVES_FROM)
-- Arg-param binding, call returns, instance-of
-- Domain cross-file rules (HTTP req↔route, pub/sub, socket matching)
-- Guarantees and validation (`.grafema/guarantees.yaml` → Datalog rules)
+**Haskell plugins (cross-file):** Resolution and enrichment as DAG-ordered plugins.
+- `js-import-resolution`: matches IMPORT_BINDING nodes to EXPORT_BINDING nodes in target modules
+- `runtime-globals`: matches unresolved REFERENCE nodes to runtime definitions
+- Enrichment plugins (express-routes, react-components, type-propagation, etc.)
+- Each language provides its own resolution plugins (ESM/CJS for JS, classpath for Java)
 
-**Node.js orchestrator:** Glue. Discovery, Babel spawning, Haskell binary spawning, RFDB ingestion, CLI/MCP interface. No analysis logic.
+**RFDB Datalog:** Ad-hoc queries + guarantees only (existing top-down evaluator, no changes needed).
+- `grafema check` — validation rules from `.grafema/guarantees.yaml`
+- MCP queries — interactive graph exploration
+- ISSUE node creation from validation rules
+
+**Rust orchestrator:** Fully language-agnostic. Zero language semantics.
+- File discovery (config-driven glob)
+- Phase 1 spawning (OXC + Haskell, parallel per file)
+- RFDB ingestion (load Phase 1 results into GraphStore)
+- Plugin DAG execution (topological sort by `depends_on`, parallel independent plugins)
+- Plugin output validation and buffered writes
 
 ## Haskell Binary Design
 
@@ -99,12 +104,15 @@ Source files
 
 ```haskell
 data FileAnalysis = FileAnalysis
-  { nodes      :: [GraphNode]
-  , edges      :: [GraphEdge]
-  , unresolved :: [UnresolvedRef]   -- for Phase 2 Datalog
-  , exports    :: [ExportInfo]      -- what this file exports
+  { nodes    :: [GraphNode]     -- includes REFERENCE (resolved:false), IMPORT_BINDING
+  , edges    :: [GraphEdge]     -- includes intra-file resolved edges from postFile
+  , exports  :: [ExportInfo]    -- what this file exports
   }
 ```
+
+**Note:** `unresolvedRefs` are internal to the Haskell binary — created during AST walk, consumed during postFile scope resolve, never serialized. The external handoff for cross-file work is:
+- **REFERENCE nodes** with `resolved: false` — identifiers that couldn't be resolved within the file
+- **IMPORT_BINDING nodes** — imports that need matching to exports in other modules
 
 ### Context threading: Reader monad, not mutable stacks
 
@@ -147,6 +155,34 @@ identifierEdges _                             ident ctx = [readsFrom ident ctx] 
 ```
 
 Compiler checks exhaustiveness. No compensatory patterns needed.
+
+### Intra-file scope resolution (postFile)
+
+The Haskell binary performs scope resolution as a post-pass within Phase 1. The scope chain is already in memory — no need to serialize it, read it back, or rebuild it in another process.
+
+```haskell
+-- Main.hs analysis flow:
+-- 1. walkNode ast          → nodes, edges, deferredRefs (internal)
+-- 2. resolveFileRefs refs rootScope → resolved edges + unresolved as REFERENCE nodes
+
+resolveFileRefs :: [DeferredRef] -> Scope -> ([Edge], [GraphNode])
+resolveFileRefs refs rootScope = partitionResults $ map resolve refs
+  where
+    resolve ref = case lookupScopeChain (drName ref) (drScopeId ref) rootScope of
+      Just declId -> Left (Edge (drFromNodeId ref) (drEdgeType ref) declId)
+      Nothing     -> Right (ReferenceNode (drFromNodeId ref) (drName ref) False)
+        -- ^ REFERENCE node with resolved=false, emitted in FileAnalysis
+```
+
+**Prerequisite:** Populate `drScopeId` (currently always `Nothing`):
+```haskell
+-- In ruleIdentifier, ruleThisExpression, etc.:
+scopeId <- askScopeId
+-- ...
+-- drScopeId = Just scopeId
+```
+
+**Key insight:** `unresolvedRefs` are an implementation detail of the per-file analyzer — created during AST walk, consumed during `resolveFileRefs`, never serialized to any external interface. The external handoff for cross-file work is REFERENCE nodes with `resolved: false` and IMPORT_BINDING nodes.
 
 ### LibraryDef: domain plugins as data
 
@@ -214,47 +250,40 @@ libraries/
 
 ### Datalog rule files
 
+Resolution and enrichment are now handled by Haskell plugins (not Datalog). The `rules/core/` directory is eliminated. Datalog is used only for validation queries and guarantees — top-down evaluation against the completed graph.
+
 ```
 rules/
-├── core/
-│   ├── imports.dl        -- import resolution, re-export chains
-│   ├── types.dl          -- type resolution, transitive extends
-│   ├── calls.dl          -- call resolution, callable targets
-│   ├── args.dl           -- arg-param binding
-│   ├── derived.dl        -- instance-of, call-returns, element-of
-│   └── callbacks.dl      -- callback call resolution
-│
-├── domain/
+├── domain/                          -- plugin query configs (optional Datalog specs)
 │   ├── http.dl           -- generic: http:request ↔ http:route matching
 │   ├── redis.dl          -- pub/sub channels, containment
 │   ├── websocket.dl      -- socket event matching
 │   ├── database.dl       -- query ↔ schema linking
 │   └── messaging.dl      -- message queue pub/sub (Kafka, RabbitMQ)
 │
-└── validation/
+└── validation/                      -- top-down Datalog queries → ISSUE nodes
     ├── broken-imports.dl -- unresolved import detection
     ├── sql-injection.dl  -- taint flow: user input → SQL query
     ├── dead-code.dl      -- exported but never imported
     └── guarantees.dl     -- user-defined invariant rules
 ```
 
+**Note:** Domain `.dl` files are plugin query configs — they specify what nodes/edges a plugin needs, queried by the existing top-down evaluator. They are NOT bottom-up resolution rules.
+
 ## Performance
 
 ```
 Pipeline for 10K file project (~500K LOC):
 
-Phase 0:  Discovery       ~100ms   (glob)
-Phase 1a: Babel parse     ~30-60s  ← BOTTLENECK (JS, single-threaded per file)
-Phase 1b: Haskell walk    ~1-2s    (native binary, embarrassingly parallel)
-Phase 1c: RFDB ingest     ~3-5s    (Rust, bulk insert ~50K nodes + ~200K edges)
-Phase 2:  Datalog rules   ~0.5-2s  (Rust, one-shot evaluation)
-───────────────────────────────────
-Total:                    ~35-70s
+Phase 0:  Discovery        ~100ms   (config-driven glob)
+Phase 1:  OXC + Haskell    ~30-60s  (parse + analyze + postFile resolve, parallel)
+Phase 1': RFDB ingest      ~3-5s    (orchestrator loads nodes + edges into GraphStore)
+Phase 2:  Plugins (DAG)    ~2-5s    (resolution + enrichment + validation)
+───────────────────────────────────────
+Total:                     ~35-70s
 ```
 
-Bottleneck is Babel parsing, not Datalog.
-
-Future: replace Babel with oxc (Rust, 50-100x faster) → total ~5-10s.
+Bottleneck is OXC parsing + Haskell analysis (Phase 1), embarrassingly parallel per file. Resolution is no longer a separate phase — it's the first plugin in the DAG (~1-2s for import matching). Enrichment plugins run in parallel where dependencies allow.
 
 ## Deployment
 
@@ -305,7 +334,8 @@ instance Analyzable JavaAST where
 **What's shared:**
 - `FileAnalysis` output format (same nodes/edges for all languages)
 - LibraryDef matcher (library detection is language-agnostic at the method level)
-- Datalog rules (cross-file resolution is language-agnostic)
+- Plugin protocol (streaming/batch — same mechanism for all languages' resolution + enrichment)
+- Validation Datalog rules (queries against completed graph — language-agnostic)
 - Semantic roles (Callable, Invocation, Declaration, Import, etc.)
 
 **What's per-language:**
@@ -318,8 +348,9 @@ instance Analyzable JavaAST where
 1. Write parser adapter (Java: `JavaParser → JSON`)
 2. Define AST ADT in Haskell (`data JavaAST = ...`)
 3. Write AG rules (`walkJava :: JavaAST -> ...`)
-4. Reuse LibraryDefs (Spring, Retrofit share HTTP patterns with Express, Axios)
-5. Reuse ALL Datalog rules (cross-file resolution is language-agnostic)
+4. Write resolution plugin (Java: classpath resolution — language-specific)
+5. Reuse LibraryDefs (Spring, Retrofit share HTTP patterns with Express, Axios)
+6. Reuse validation Datalog rules, enrichment plugins, plugin protocol
 
 ### 2. Non-Semantic Projections (Task Tracker, Infrastructure, Monitoring)
 
@@ -465,21 +496,23 @@ Documentation needed:
 | **Visitors** (expressions + statements + declarations) | ~3500 lines | ~800 lines Haskell AG rules | 77% |
 | **edge-map.ts** | ~216 lines | 0 (subsumed by AG rules) | 100% |
 | **walk.ts** (traversal engine) | ~771 lines | ~200 lines Haskell (generic catamorphism) | 74% |
-| **resolve.ts** (cross-file) | ~1400 lines | ~80 lines Datalog | 94% |
-| **15 enricher plugins** | ~3000 lines | ~120 lines Datalog | 96% |
-| **Plugin base + orchestrator** | ~2000 lines | ~500 lines JS (simplified) | 75% |
+| **resolve.ts** (cross-file) | ~1400 lines | ~500-800 lines Haskell plugin | 43-64% |
+| **15 enricher plugins** | ~3000 lines | ~500-800 lines Haskell plugins | 73-83% |
+| **Plugin base + orchestrator** | ~2000 lines | ~300 lines Rust (DAG runner) | 85% |
 | **Domain plugins** (Express etc.) | ~200 lines JS classes | ~30 lines LibraryDef data | 85% |
-| **Domain enrichers** (5 plugins) | ~1050 lines | ~40 lines Datalog | 96% |
+| **Domain enrichers** (5 plugins) | ~1050 lines | ~200 lines Haskell plugins | 81% |
 | **6 validation plugins** | ~800 lines | ~60 lines Datalog | 93% |
 | **Types/interfaces** | ~500 lines | ~150 lines Haskell types | 70% |
 | ──── | ──── | ──── | ──── |
-| **Total analysis code** | **~13,400 lines JS** | **~1,980 lines (Haskell + Datalog + JS)** | **~85%** |
+| **Total analysis code** | **~13,400 lines JS** | **~2,800-3,200 lines (Haskell + Rust + Datalog)** | **~76%** |
 
 Breakdown of v3:
-- ~1,000 lines Haskell (AG rules + types + generic walker)
-- ~300 lines Datalog (core + domain + validation rules)
-- ~500 lines JS (simplified orchestrator)
+- ~1,800-2,400 lines Haskell (AG rules + types + walker + resolution plugin + enricher plugins)
+- ~300 lines Rust (orchestrator DAG runner)
+- ~60 lines Datalog (validation rules)
 - ~180 lines LibraryDef data files
+
+**Note:** Reduction is less dramatic than original Datalog-based estimate (~76% vs ~85%), but the resulting code is more maintainable — each plugin is a self-contained Haskell module with exhaustive pattern matching, vs Datalog rules with no type safety.
 
 **What grows:** Test fixtures (sample ASTs + expected outputs), documentation, build infrastructure (GHC + Cabal).
 
@@ -493,38 +526,45 @@ Breakdown of v3:
 
 ## Migration Path
 
-Not a rewrite. Incremental replacement:
+**Full rewrite of `packages/core/`.** Everything in core (visitors, walk.ts, edge-map, resolve.ts, enrichers, orchestrator) is replaced. Other packages (cli, mcp, gui, rfdb-server, types) are not affected — they consume the graph, not produce it.
 
-**Step 1: Haskell binary for per-file analysis (replaces core-v2)**
-- Haskell binary reads Babel JSON AST, outputs FileAnalysis JSON
-- JS orchestrator calls Haskell binary instead of core-v2 walkFile
-- Enrichers and resolve.ts still run in JS (unchanged)
+The rewrite is sequenced so that each step can be validated against core-v2 output before proceeding:
+
+**Step 1: Haskell binary for per-file analysis (replaces visitors + walk.ts + edge-map)**
+- Haskell binary reads OXC ESTree JSON, outputs FileAnalysis JSON
+- Includes postFile scope resolution (intra-file)
 - Validation: output must match core-v2 exactly (diff test suite)
 
-**Step 2: Datalog rules for cross-file resolution (replaces resolve.ts)**
-- Write Datalog rules in RFDB
-- JS orchestrator loads unresolved refs, fires Datalog
-- Enrichers still run in JS
+**Step 2: Rust orchestrator + RFDB ingestion (replaces JS orchestrator)**
+- Config-driven discovery, Phase 1 spawning, RFDB ingestion
+- Plugin DAG runner for Phase 2
+- Validation: end-to-end analysis produces same graph as core-v2
+
+**Step 3: Haskell plugins for cross-file resolution (replaces resolve.ts)**
+- `js-import-resolution` plugin matches IMPORT_BINDING → EXPORT_BINDING
+- `runtime-globals` plugin matches unresolved REFERENCE → runtime definitions
 - Validation: resolved edges must match resolve.ts output
 
-**Step 3: Datalog rules for enrichment (replaces 15 enrichers)**
-- One enricher at a time → Datalog rule
+**Step 4: Haskell plugins for enrichment (replaces 15 enrichers)**
+- One enricher at a time → streaming or batch plugin
 - Start with easiest: ExportEntityLinker, SocketConnectionEnricher
 - End with hardest: ValueDomainAnalyzer, ServiceConnectionEnricher
 - Validation: enriched graph must match enricher output
 
-**Step 4: LibraryDef system (replaces domain plugins)**
+**Step 5: LibraryDef system (replaces domain plugins)**
 - Express LibraryDef replaces ExpressPlugin + ExpressHandlerLinker + MountPointResolver
-- Each library: LibraryDef + domain Datalog rules
+- Each library: LibraryDef (detection patterns + method rules) + enrichment plugin (cross-file semantics)
 - Validation: domain nodes/edges must match plugin output
 
-**Step 5: Validation as Datalog (replaces validation plugins)**
+**Step 6: Validation as Datalog (replaces validation plugins)**
 - Each validation plugin → Datalog rule file
 - Guarantees already in Datalog (grafema check)
 
-**Step 6: Multi-language (new capability)**
+**Step 7: Multi-language (new capability)**
 - Java first (simplest AST, reveals cross-language patterns)
 - Then Kotlin → Swift → Obj-C
+
+After Step 6, `packages/core/` can be deleted entirely. The analysis pipeline is: Rust orchestrator → OXC + Haskell (Phase 1) → Haskell plugins (Phase 2) → RFDB (storage + Datalog queries).
 
 ## Multi-Language Support
 
@@ -532,7 +572,7 @@ Not a rewrite. Incremental replacement:
 
 | Language | AST types | AG rules | Write | Debug | Libraries (top 10) |
 |----------|-----------|----------|-------|-------|---------------------|
-| **JS/TS** | 253 | ~800 lines | done | done | express, axios, react, ... |
+| **JS/TS** | ~160 | ~800 lines | done | done | express, axios, react, ... |
 | **Java** | ~200 | ~600 lines | ~2h | ~3h | Spring, Hibernate, JDBC, Retrofit |
 | **Python** | ~100 | ~500 lines | ~1.5h | ~3h | Django, Flask, FastAPI, SQLAlchemy |
 | **Kotlin** | ~180 | ~650 lines | ~2.5h | ~4h | Ktor, Exposed, Spring (shared) |
@@ -604,71 +644,74 @@ Version auto-detected from `package.json` semver ranges.
 
 **Escape hatch:** If Haskell is abandoned, the AG spec can target Rust (via `enum` exhaustiveness) or even TypeScript (via discriminated unions + `never` check). The intellectual content — the rules — is language-independent.
 
-### R2: Babel JSON AST serialization overhead
+### R2: OXC JSON AST serialization overhead
 
-**Risk:** Babel AST → JSON → parse in Haskell adds serialization/deserialization cost. For large files (10K+ lines), the JSON AST can be 5-10MB.
+**Risk:** OXC AST → JSON → parse in Haskell adds serialization/deserialization cost. For large files (10K+ lines), the JSON AST can be 5-10MB.
 
-**Severity:** Medium. Babel is already the bottleneck; serialization adds ~10-20% overhead.
+**Severity:** Low-Medium. OXC is 10-100x faster than Babel, so parsing is no longer the bottleneck. Serialization overhead (~10-20%) is relative to a much smaller base.
 
 **Mitigations:**
 - Use MessagePack or CBOR instead of JSON (2-3x smaller, faster to parse).
 - Use `stdout` pipe instead of temp files (streaming, no disk I/O).
-- Long-term: replace Babel with oxc (Rust parser). Then oxc → Haskell via FFI or shared memory, no serialization at all.
-- Alternative: Haskell WASM module called from JS, receives AST as in-memory object via WASM linear memory.
+- Long-term: OXC → Haskell via FFI or shared memory, no serialization at all.
+- Alternative: Haskell WASM module, receives AST as in-memory object via WASM linear memory.
 
 ### R3: RFDB Datalog expressiveness
 
-**Risk:** Some enrichment patterns may not be expressible in RFDB's current Datalog dialect. Specifically:
+**Risk:** Some query patterns may not be expressible in RFDB's current Datalog dialect. Specifically:
 - `paths_match(URL, Path)` for parametric routes (`/api/:id` matches `/api/42`)
 - String operations (concat, prefix matching, regex)
 - Aggregation (COUNT, MIN for disambiguation)
 - Negation-as-failure (stratified negation for priority-ordered resolution)
 
-**Severity:** High. If Datalog can't express a pattern, it stays in JS — defeating the purpose.
+**Severity:** Medium (reduced from High). Datalog is now used ONLY for queries and guarantees (`grafema check`, MCP queries, ISSUE node creation) — not for resolution or enrichment. Resolution and enrichment are Haskell plugins with full language expressiveness. The remaining Datalog use cases (validation rules, cross-projection queries) are well within top-down evaluation capabilities.
 
 **Mitigations:**
-- Extend RFDB Datalog with built-in predicates: `string_concat`, `glob_match`, `regex_match`.
-- Add aggregate support: `count`, `min`, `max` — standard in Souffle and DataScript.
-- Stratified negation is well-understood theory; implement in RFDB.
-- For truly inexpressible patterns (ValueDomainAnalyzer path-sensitivity): keep as Rust plugin in RFDB, callable from Datalog as an external predicate.
-- Worst case: ~3 enrichers stay in JS/Rust. The other 12 move to Datalog. Still 80% reduction.
+- Extend RFDB Datalog with built-in predicates: `string_concat`, `glob_match`, `regex_match` — for validation queries.
+- Add aggregate support: `count`, `min`, `max` — for guarantee rules.
+- Stratified negation is well-understood theory; implement in RFDB if needed.
+- For complex validation patterns: implement as a validation plugin (same mechanism as enrichment plugins) instead of Datalog.
 
-### R4: Two-binary deployment complexity
+### R4: Multi-binary deployment complexity
 
-**Risk:** Shipping both a Haskell binary and a Rust binary (RFDB) alongside an npm package increases build/deployment complexity. Platform matrix: darwin-arm64, darwin-x64, linux-x64, linux-arm64, win-x64 = 5 platforms × 2 binaries = 10 artifacts.
+**Risk:** Shipping multiple native binaries alongside an npm package increases build/deployment complexity. Current binary count: Rust orchestrator, RFDB, Haskell analyzer (core-v3), Haskell resolver (grafema-resolve), Haskell enricher (grafema-enrich). Platform matrix: darwin-arm64, darwin-x64, linux-x64, linux-arm64, win-x64 = 5 platforms × 3-5 binaries = 15-25 artifacts.
 
-**Severity:** Medium. Well-solved problem (esbuild, swc, Biome all do this).
+**Severity:** Medium-High (increased from Medium). More binaries than originally planned.
 
 **Mitigations:**
+- Haskell binaries can share a single GHC runtime — or compile as subcommands of one `grafema-haskell` binary (analyze/resolve/enrich modes). Reduces Haskell to 1 binary.
+- Rust orchestrator + RFDB could merge into one binary (orchestrator as RFDB subcommand). Reduces Rust to 1 binary.
+- **Realistic minimum: 2 native binaries** (one Rust, one Haskell) + platform matrix = 10 artifacts.
 - `optionalDependencies` in npm with platform-specific packages (established pattern).
-- GHC WASM backend → single `grafema-analyzer.wasm`, no platform matrix for Haskell.
-- Docker image for CI/CD (both binaries pre-installed).
-- Homebrew/apt/winget for standalone installation.
-- Future: merge Haskell logic into RFDB as a Rust module (rewrite AG rules in Rust, ship one binary). Haskell serves as the prototyping/spec language, Rust as production target.
+- GHC WASM backend → single `grafema-haskell.wasm`, no platform matrix for Haskell.
+- Docker image for CI/CD (all binaries pre-installed).
+- Future: merge Haskell logic into Rust (rewrite AG rules in Rust, ship one binary).
 
-### R5: Haskell ↔ JSON AST fidelity
+### R5: Haskell ↔ OXC ESTree fidelity
 
-**Risk:** Babel's AST has undocumented fields, edge cases, and version-specific variations. The Haskell ADT may not match 100%, causing silent data loss or crashes.
+**Risk:** OXC's ESTree JSON may have edge cases or deviations from the spec. The Haskell ADT may not match 100%, causing silent data loss or crashes.
 
-**Severity:** Medium-High. Babel's AST is de facto, not formally specified.
+**Severity:** Medium (reduced from Medium-High). ESTree is a well-specified standard, unlike Babel's de facto AST. OXC aims for ESTree conformance.
 
 **Mitigations:**
-- Generate Haskell ADT from `@babel/types` definitions (same source core-v2 uses). Mechanical, not manual.
+- Generate Haskell ADT from ESTree spec (formalized, unlike Babel's ad-hoc `@babel/types`).
 - Differential testing: run core-v2 (JS) and v3 (Haskell) on same files, diff outputs. Any mismatch = bug.
 - Haskell's `aeson` JSON parsing with `rejectUnknownFields = False` — unknown fields logged, not crashed.
-- Babel's `@babel/types` package has `NODE_FIELDS` definitions — exhaustive field list per type. Use as ground truth.
+- OXC has its own conformance tests against ESTree spec — leverage them.
 
 ### R6: Incremental analysis complexity
 
-**Risk:** Current architecture supports incremental re-analysis (changed files only, via `touchedFiles`). In v3, Haskell binary is stateless per-file (good for incremental), but Datalog rules fire on the ENTIRE fact set. Re-running all Datalog rules after one file changes may be expensive for large projects.
+**Risk:** Current architecture supports incremental re-analysis (changed files only, via `touchedFiles`). In v3, Phase 1 (Haskell per-file) is naturally incremental. But Phase 2 (plugins) is the question: which plugins need re-running when one file changes?
 
 **Severity:** Medium. Matters for IDE-scale latency (<1s response).
 
 **Mitigations:**
 - Haskell binary: already per-file, naturally incremental. Re-analyze only changed file.
-- RFDB: on file change, delete old nodes/edges for that file, insert new ones, re-run Datalog on the delta.
-- Semi-naive evaluation (standard Datalog optimization): only propagate changes from new/modified facts, don't re-derive unchanged conclusions.
-- For IDE latency: skip Datalog for single-file edits (per-file analysis is sufficient for local navigation). Run full Datalog on save/build.
+- Resolution plugins: re-run only for changed file's IMPORT_BINDINGs + files that import the changed file.
+- Enrichment plugins: re-run only plugins whose input query matches changed file's nodes. Track read/write sets per plugin to determine which are affected.
+- Conservative fallback: re-run all plugins (~2-5s). Acceptable for save-time; optimize later for IDE-scale latency.
+- For IDE latency: skip plugins for single-file edits (per-file analysis is sufficient for local navigation). Run full plugin DAG on save/build.
+- Generation GC handles correctness: stale plugin output from previous runs is cleaned up regardless.
 
 ### R7: Testing and correctness verification
 
@@ -679,7 +722,7 @@ Version auto-detected from `package.json` semver ranges.
 **Mitigations:**
 - Step 1 of migration: differential testing. v3 output MUST match core-v2 output for all existing test fixtures.
 - Property-based testing (QuickCheck): generate random ASTs, verify invariants (every CALL has a target or an ISSUE, every IMPORT resolves or has an error, scope chains are acyclic).
-- Exhaustiveness matrix: 253 AST types × 8 lenses. Haskell compiler warns if any cell is unhandled.
+- Exhaustiveness matrix: ~160 OXC ESTree types × 8 lenses. Haskell compiler warns if any cell is unhandled.
 - Grafema guarantees (`grafema check`): existing guarantee rules validate graph structural invariants. These are Datalog rules that run on the output — independent of implementation language.
 
 ### Risk summary
@@ -687,14 +730,14 @@ Version auto-detected from `package.json` semver ranges.
 | Risk | Severity | Mitigation quality | Net risk |
 |------|----------|-------------------|----------|
 | R1: Haskell hiring | High | Medium (LLMs, DSL escape hatch) | **Medium-High** |
-| R2: JSON serialization | Medium | High (MessagePack, oxc) | **Low** |
-| R3: Datalog expressiveness | High | Medium (extend RFDB, keep ~3 in Rust) | **Medium** |
-| R4: Two-binary deploy | Medium | High (solved problem, WASM) | **Low** |
-| R5: AST fidelity | Medium-High | High (codegen ADT, diff testing) | **Low-Medium** |
+| R2: JSON serialization | Low-Medium | High (OXC already in use, MessagePack) | **Low** |
+| R3: Datalog expressiveness | Medium | High (Datalog only for queries/guarantees now) | **Low** |
+| R4: Multi-binary deploy | Medium-High | Medium (merge subcommands, WASM) | **Medium** |
+| R5: ESTree fidelity | Medium | High (ESTree spec, diff testing) | **Low** |
 | R6: Incremental analysis | Medium | Medium (semi-naive, skip for IDE) | **Medium** |
 | R7: Testing | Medium | High (differential, property-based) | **Low** |
 
-**Top 2 risks: R1 (Haskell talent) and R3 (Datalog expressiveness).** Both have escape hatches but require active investment.
+**Top risk: R1 (Haskell talent).** Has escape hatches but requires active investment. R3 (Datalog expressiveness) was reduced to Low — Datalog is now only for queries/guarantees, not resolution/enrichment.
 
 ## What We Actually Designed
 
@@ -705,7 +748,7 @@ This is not a code analysis tool. We designed a **formal ontology of software en
 ### What this is
 
 1. **Exhaustive per-node analysis** (Attribute Grammars / Haskell) guarantees every AST construct in every supported language produces correct graph edges — verified at compile time.
-2. **Declarative cross-file resolution** (Datalog) replaces thousands of lines of imperative graph traversal with ~50 lines of recursive rules that are provably terminating and sound.
+2. **Plugin-based cross-file resolution** (Haskell plugins via unified DAG) replaces thousands of lines of imperative graph traversal with language-specific resolution plugins using the same protocol as enrichment.
 3. **Data-driven library support** (LibraryDef) makes adding a new framework a 30-line data file instead of a 300-line plugin class.
 4. **12 orthogonal projections** (Semantic + 11 sociotechnical) unified in a single graph, connected by Datalog rules.
 
@@ -754,8 +797,8 @@ The key insight that unlocked v3: the analysis pipeline contains THREE fundament
 
 Once you see the three layers, the architecture is obvious:
 - Pattern matching → Haskell (it was DESIGNED for this)
-- Joins + transitive closure → Datalog (it was DESIGNED for this)
-- I/O + glue → JS/Node (it was DESIGNED for this)
+- Joins + transitive closure → Haskell plugins (language-specific resolution) + Datalog (queries/guarantees)
+- I/O + orchestration → Rust (language-agnostic DAG runner)
 
 But seeing the three layers requires: (a) building the system once in one language, (b) analyzing what you built, (c) recognizing the computational models. You can't design v3 without having built v2. The predecessor is the proof that the problem exists.
 
@@ -857,7 +900,7 @@ The Venn diagram of people who know all 10: ∅
 
 ### Three real moats
 
-1. **Accumulated rules.** 253 AST types × AG rules + 100+ LibraryDefs + Datalog rules = person-years of semantic knowledge encoded in small, verifiable units.
+1. **Accumulated rules.** ~160 OXC ESTree types × AG rules + 100+ LibraryDefs + Datalog rules = person-years of semantic knowledge encoded in small, verifiable units.
 
 2. **Velocity.** LLM-native development model. Someone forks → in a month we have +3 languages and +20 LibraryDefs. They're still reading the architecture doc.
 
@@ -871,9 +914,534 @@ Option B: **Split repo.** Public: CLI, MCP, VSCode extension, binary distributio
 
 Option B gives: open ecosystem (anyone builds on the graph) + proprietary core (the hard-to-replicate engine). Precedent: MongoDB (SSPL), Elasticsearch (proprietary after 7.x), CockroachDB (BSL). More relevant: Turso (libSQL open, cloud proprietary), Neon (compute open, storage proprietary).
 
+## Revised Architecture Decisions (2026-03-03)
+
+After implementing Phase 1 (Haskell per-file analysis) and running it on Grafema's own codebase (116K nodes, 63K edges, 0 analysis errors), several architectural decisions were revised based on real experience.
+
+### Current State
+
+**What works:**
+- Haskell binary (`grafema-core-v3`) reads OXC ESTree JSON, outputs FileAnalysis JSON (nodes, edges)
+- 116,782 nodes, 63,813 edges across 354 files, 0 dangling edges
+- New node types: REFERENCE (38,539), EXPRESSION (5,678), IMPORT_BINDING (2,085), EXPORT_BINDING (771)
+- New edge type: DERIVED_FROM (10,820)
+- Committed as `f6cc2ac`
+
+**What's missing:**
+- Intra-file scope resolution (postFile pass — `resolveFileRefs` in Haskell binary)
+- Cross-file resolution plugin (`js-import-resolution`)
+- Rust orchestrator (language-agnostic DAG runner)
+- Enrichment plugins
+- Plugin protocol implementation
+
+### Decision 1: Parser — OXC, not Babel
+
+The Haskell binary already reads OXC ESTree JSON (via `packages/core-v3/scripts/parse.js` calling `oxc-parser`). This is the correct choice:
+- OXC is 10-100x faster than Babel
+- ESTree JSON format is stable and well-specified
+- Babel's quirks (non-standard AST fields, undocumented behavior) are avoided
+
+The original plan mentioned "Babel JSON AST" — this is outdated. OXC is the parser.
+
+### Decision 2: Orchestrator — separate Rust binary, not JS, not embedded in RFDB
+
+**Old plan:** JS orchestrator (Node.js) coordinates Haskell binary + RFDB Datalog.
+**New plan:** Separate Rust binary (orchestrator) communicates with RFDB via unix-socket.
+
+RFDB = storage + Datalog engine. Orchestrator = pipeline coordination (discover files, spawn analyzers, load results, trigger Datalog phases). Separate concerns, separate processes.
+
+Rationale: migrating the JS orchestrator piecemeal is painful and creates a maintenance burden for a component we plan to replace anyway. The JS orchestrator served as a prototype; the production orchestrator is Rust for single-binary deployment alongside RFDB.
+
+**Pipeline:**
+```
+Orchestrator (Rust, separate binary)          RFDB (Rust, separate process)
+  │                                              │
+  ├─ Phase 0: DISCOVER                          │
+  │   Config-driven: glob → file list            │
+  │   ──── insert MODULE nodes ──────────────►   │ GraphStore
+  │                                              │
+  ├─ Phase 1: PER-FILE ANALYSIS (parallel)       │
+  │   For each file (N workers):                 │
+  │     OXC parser → Haskell binary              │
+  │     (analyze + postFile scope resolve)       │
+  │     → FileAnalysis JSON (nodes, edges,       │
+  │       REFERENCE resolved:false,              │
+  │       IMPORT_BINDING nodes)                  │
+  │   ──── load nodes + edges ───────────────►   │ GraphStore
+  │                                              │
+  ├─ Phase 2: PLUGINS (DAG-parallel)             │
+  │   All use same mechanism. DAG ordering       │
+  │   from depends_on.                           │
+  │                                              │
+  │   Resolution plugins (depends_on: []):       │
+  │     js-import-resolution, runtime-globals    │
+  │   Enrichment plugins:                        │
+  │     express-routes, react-components, etc.   │
+  │   Validation plugins:                        │
+  │     Top-down Datalog queries → ISSUE nodes   │
+  │                                              │
+  │   Streaming: query GraphStore → stdin →      │
+  │     plugin → stdout → validate → buffer      │
+  │     → atomic write on success ───────────►   │ GraphStore
+  │   Batch: plugin gets RFDB_SOCKET,            │
+  │     queries + writes autonomously ───────►   │ GraphStore
+  │                                              │
+```
+
+**Key change:** No separate "Phase 2: RESOLUTION" in Rust. No FactStore loading. Orchestrator is ~300 LOC of plugin DAG runner with zero language semantics.
+
+### How references are resolved
+
+Resolution happens in two stages, neither of which involves the Rust orchestrator:
+
+**Stage 1: Intra-file scope resolution (Haskell postFile, Phase 1)**
+
+The Haskell binary resolves scope chain references within each file as a post-pass. The scope chain is already in memory from the AST walk — no serialization needed.
+
+- `walkNode` produces nodes, edges, and deferred refs (internal to Haskell)
+- `resolveFileRefs` walks scope chain to resolve intra-file references
+- Resolved refs → edges emitted in FileAnalysis
+- Unresolved identifiers → REFERENCE nodes with `resolved: false`
+- Import statements → IMPORT_BINDING nodes
+
+`unresolvedRefs` never leave the Haskell process — they're created during walkNode and consumed during resolveFileRefs.
+
+**Stage 2: Cross-file resolution (Haskell plugins, Phase 2)**
+
+Cross-file resolution is a plugin in the DAG, using the same mechanism as enrichment:
+
+1. **`js-import-resolution` plugin** queries IMPORT_BINDING nodes, matches to EXPORT_BINDING nodes in target modules. Handles re-export chains with visited set + iteration limit (max 100 depth).
+
+2. **`runtime-globals` plugin** queries unresolved REFERENCE nodes (resolved:false), matches to runtime definitions (Node.js builtins, browser globals, etc.).
+
+3. **`library-defs` plugin** queries 3rd-party IMPORT_BINDINGs, matches to LibraryDef stubs.
+
+4. Each language provides its own resolution plugins (ESM/CJS for JS, `__init__.py` for Python, classpath for Java).
+
+**No "resolution phase."** All post-analysis work (resolution, enrichment, validation) uses the unified plugin mechanism with DAG ordering. Resolution plugins have `depends_on: []` (run first). Enrichers depend on resolution. Validation depends on everything.
+
+```yaml
+plugins:
+  - name: "js-import-resolution"
+    command: "grafema-resolve imports"
+    query: { type: "IMPORT_BINDING" }
+    depends_on: []
+
+  - name: "runtime-globals"
+    command: "grafema-resolve runtime-globals"
+    query:
+      datalog: 'match(X) :- node(X, "REFERENCE"), attr(X, "resolved", "false").'
+    depends_on: []
+
+  - name: "express-routes"
+    command: "grafema-enrich express"
+    depends_on: ["js-import-resolution"]
+```
+
+### Decision 3: Generation GC, not Provenance
+
+**Provenance tracking was tried before and failed.** Each node/edge was tagged with its producing rule + input bindings. On re-analysis, delete facts whose provenance no longer holds. In practice: provenance metadata exploded (3-5x graph size), provenance maintenance became the bottleneck, bugs in provenance tracking were harder to find than bugs in analysis.
+
+**Generation GC:**
+```
+1. Bump generation counter: gen = current_gen + 1
+2. Run analysis pipeline (all phases)
+3. Every emitted/touched node/edge gets stamped: generation = gen
+4. Delete everything where generation < gen
+```
+
+Properties:
+- Zero metadata overhead during analysis (just a single integer per fact)
+- Correctness by construction: if a rule didn't fire, its output is gone
+- Works for all phases (per-file, resolution, enrichment) uniformly
+- Incremental: re-analyze only changed files → only their nodes get new generation → old versions deleted
+- File-scoped optimization: on single-file change, only GC nodes where `file = changed_file AND generation < gen`
+
+### Decision 4: SemanticID for ALL nodes
+
+SemanticID stays **human-readable** — that's the whole point of "Semantic" in the name.
+
+Format: `file->TYPE->name[in:parent,h:xxxx]`
+
+Extends to all nodes, not just code:
+- Code: `src/auth.ts->FUNCTION->login[in:AuthService,h:a1b2]`
+- Incidents: `pagerduty->INCIDENT->P1-2024-03-15[h:c3d4]`
+- Features: `linear->FEATURE->user-auth[h:e5f6]`
+- Metrics: `datadog->METRIC->api.latency.p99[h:g7h8]`
+
+For plugin-derived nodes: `SemanticID = hash(plugin_name, input_node_id)` — deterministic, stable across re-runs if inputs don't change.
+
+Worth the overhead (slightly longer IDs, hash computation) because:
+- Debuggable: you can READ the ID and know what it is
+- Stable: same code → same ID (enables incremental analysis)
+- Composable: parent reference in ID creates implicit hierarchy
+
+### Decision 5: Config-driven plugin system
+
+Analysis is not hardcoded per language. Config declares what to run. Resolution, enrichment, and validation all use the same unified plugin mechanism:
+
+```yaml
+# .grafema/config.yaml
+analysis:
+  timeout_per_file: 30s    # default, per-file timeout
+  plugins:
+    - pattern: "*.{js,jsx,ts,tsx}"
+      command: "grafema-core-v3 analyze"   # Haskell binary, analyze mode
+      parser: "oxc"
+      timeout: 60s                         # override for specific plugin
+    - pattern: "*.java"
+      command: "grafema-java analyze"      # Future: another Haskell binary
+      parser: "javaparser"
+    - pattern: "*.py"
+      command: "grafema-python analyze"
+      parser: "tree-sitter-python"
+
+plugins:
+  # Resolution plugins (run first, no dependencies)
+  - name: "js-import-resolution"
+    command: "grafema-resolve imports"
+    query: { type: "IMPORT_BINDING" }
+    depends_on: []
+
+  - name: "runtime-globals"
+    command: "grafema-resolve runtime-globals"
+    query:
+      datalog: 'match(X) :- node(X, "REFERENCE"), attr(X, "resolved", "false").'
+    depends_on: []
+
+  # Enrichment plugins (depend on resolution)
+  - name: "express-routes"
+    command: "grafema-enrich express"
+    mode: streaming
+    query:
+      # Option A: simple spec
+      type: "CALL"
+      metadata: { method: ["get","post","put","delete"] }
+      include_edges: ["READS_FROM"]
+      # Option B: Datalog query (alternative)
+      # datalog: |
+      #   match(CallId) :- node(CallId, "CALL"), attr(CallId, "method", Method), ...
+    depends_on: ["js-import-resolution"]
+
+  - name: "django-models"
+    command: "python3 enrichers/django.py"
+    mode: batch
+    depends_on: ["js-import-resolution"]
+
+  - name: "react-components"
+    command: "node enrichers/react.js"
+    mode: streaming
+    query:
+      type: "CALL"
+      metadata: { jsx: true }
+    depends_on: ["js-import-resolution"]
+
+  - name: "security-audit"
+    command: "./enrichers/security-scanner"
+    mode: batch
+    depends_on: ["express-routes", "django-models"]
+
+  # Validation plugins (depend on everything)
+  - name: "dangling-edges"
+    type: "datalog"
+    file: "rules/validate-edges.dl"     # Existing top-down Datalog, no changes
+    depends_on: ["express-routes", "react-components", "security-audit"]
+```
+
+**Key properties:**
+- Analysis plugins = arbitrary commands that read AST and output FileAnalysis JSON
+- Resolution = Haskell plugins with `depends_on: []` (run first in DAG)
+- Enrichment = streaming (stdin/stdout JSON lines) or batch (RFDB socket) plugins in any language
+- Validation = existing top-down Datalog queries that create ISSUE nodes
+- ALL post-analysis plugins use the same mechanism — no separate "resolution phase"
+- DAG dependencies via explicit `depends_on` — orchestrator topologically sorts and parallelizes independent plugins
+- Plugin query supports flat spec OR Datalog query (for complex multi-hop patterns)
+
+### Decision 6: No MATERIALIZE — resolution as plugins, not Rust code
+
+**MATERIALIZE was removed from the plan.** Originally proposed as a Datalog extension for bottom-up fact creation, it was abandoned because:
+
+1. **Requires a new bottom-up evaluator** with semi-naive optimization (~2000+ LOC) — the existing top-down evaluator can't do it
+2. **Resolution is language-specific** — each language has its own import semantics (ESM/CJS, classpath, `__init__.py`), so resolution must be in Haskell plugins, not a generic Rust phase
+3. **Enrichment is pattern matching**, not joins — Haskell or any language via plugin protocol
+4. **No enricher needs the full graph** — each works on a small subset (<1-10%), queried by type/metadata
+
+**Resolution is a Haskell plugin, not Rust code in the orchestrator.** The orchestrator has zero resolution logic — it's a language-agnostic DAG runner that spawns plugins. Resolution plugins (`js-import-resolution`, `runtime-globals`) use the same streaming/batch protocol as enrichment plugins.
+
+**The plugin protocol handles resolution, enrichment, and validation uniformly.** See Decision 6a for the protocol spec.
+
+**RFDB stays clean:** GraphStore + top-down Datalog for queries/guarantees. No new features needed.
+
+### Decision 6a: Enrichment plugin protocol
+
+Two modes, both supported for any language (Haskell, JS, Python, binary):
+
+**Streaming mode** — orchestrator controls data flow, plugin is a pure function:
+
+```
+Orchestrator                         Plugin (any language)
+    │                                    │
+    │ query GraphStore per enricher spec │
+    │ ────── JSON line ──────────────►   │ stdin
+    │ ────── JSON line ──────────────►   │
+    │                                    │ pattern match, process
+    │ ◄────── emit_node JSON line ────   │ stdout
+    │ ◄────── emit_edge JSON line ────   │
+    │ ────── EOF ────────────────────►   │
+    │ ◄────── EOF ───────────────────    │
+```
+
+Plugin doesn't know about RFDB. Stateless. Input: JSON lines on stdin. Output: JSON lines on stdout.
+
+Input contract (per JSON line):
+```json
+{"node":{"id":"...","type":"CALL","name":"app.get","file":"src/app.ts","line":42,
+  "metadata":{"method":"get","object":"app"},
+  "edges":[{"type":"READS_FROM","target":"express-app-id","targetType":"VARIABLE","targetName":"app"}]}}
+```
+
+Output contract (per JSON line):
+```json
+{"emit_node":{"id":"...","type":"ROUTE","name":"/api/users","file":"src/app.ts","line":42,"metadata":{"method":"GET"}}}
+{"emit_edge":{"from":"route-id","to":"handler-id","type":"HANDLES"}}
+```
+
+**Batch mode** — plugin controls execution, gets RFDB socket:
+
+```
+Orchestrator                         Plugin (any language)
+    │                                    │
+    │ spawn with env:                    │
+    │   RFDB_SOCKET=/tmp/rfdb.sock       │
+    │   RFDB_DATABASE=project-xyz        │
+    │ ──────────────────────────────►    │
+    │                                    │ connect to RFDB
+    │                                    │ query → process → write
+    │                                    │ query → process → write
+    │ ◄──── exit code 0 ────────────    │
+```
+
+Plugin makes its own queries and writes results. Full autonomy. Needed for complex multi-query patterns.
+
+**Config** (unified `plugins` section — resolution, enrichment, and validation all use the same mechanism):
+
+```yaml
+plugins:
+  # Resolution (depends_on: [] → runs first)
+  - name: "js-import-resolution"
+    command: "grafema-resolve imports"
+    mode: streaming
+    query: { type: "IMPORT_BINDING" }
+    depends_on: []
+
+  - name: "runtime-globals"
+    command: "grafema-resolve runtime-globals"
+    mode: streaming
+    query:
+      datalog: 'match(X) :- node(X, "REFERENCE"), attr(X, "resolved", "false").'
+    depends_on: []
+
+  # Enrichment (depends on resolution)
+  - name: "express-routes"
+    command: "grafema-enrich express"
+    mode: streaming
+    query:
+      type: "CALL"
+      metadata: { method: ["get","post","put","delete"] }
+      include_edges: ["READS_FROM"]
+    depends_on: ["js-import-resolution"]
+
+  - name: "django-models"
+    command: "python3 enrichers/django.py"
+    mode: batch
+    depends_on: ["js-import-resolution"]
+
+  - name: "react-components"
+    command: "node enrichers/react.js"
+    mode: streaming
+    query:
+      type: "CALL"
+      metadata: { jsx: true }
+    depends_on: ["js-import-resolution"]
+
+  # Cross-enricher dependency
+  - name: "security-audit"
+    command: "./enrichers/security-scanner"
+    mode: batch
+    depends_on: ["express-routes", "django-models"]
+```
+
+**DAG parallelism:** Orchestrator topologically sorts by `depends_on`, runs independent plugins in parallel as separate OS processes. Multi-core utilization is free — each plugin is a separate process.
+
+```
+js-import-resolution (Haskell, streaming, depends_on: [])
+runtime-globals (Haskell, streaming, depends_on: [])
+    │
+    ├─── express-routes (Haskell, streaming)  ──┐
+    ├─── django-models (Python, batch)          ├── security-audit (binary, batch)
+    ├─── react-components (JS, streaming)  ─────┘
+    └─── type-propagation (Haskell, streaming)
+```
+
+**Plugin output handling:**
+- Orchestrator buffers all streaming output in memory, writes atomically on plugin success (O1)
+- Orchestrator validates streaming output before writing — node types, required fields, edge targets (C1)
+- Orchestrator stamps `_source` + `_generation` metadata on all plugin output (R3)
+- Per-file timeout with ISSUE node on skip (O4)
+- Re-export cycle detection via visited set in `js-import-resolution` (O2)
+
+### Decision 7a: Enrichment as separate binary
+
+Per-file analysis and enrichment use different input types (ASTNode vs GraphNode). Mixing them in one binary creates coupling.
+
+```
+packages/
+  core-v3/          # Per-file AST → graph (analyze mode only)
+    src/
+      AST/Types.hs  # ASTNode ADT (OXC ESTree)
+      Rules/         # Per-AST-node rules
+      Analysis/      # Walker, Context, SemanticId, postFile resolve
+
+  resolvers/         # Cross-file resolution plugins (graph → resolved edges)
+    src/
+      Graph/Types.hs # GraphNode ADT (from GraphStore JSON, shared with enrichers)
+      Resolvers/
+        ImportResolution.hs   # IMPORT_BINDING → EXPORT_BINDING matching
+        RuntimeGlobals.hs     # Unresolved REFERENCE → runtime definitions
+      Protocol.hs    # Streaming JSON lines protocol
+
+  enrichers/         # Graph → enriched graph (grafema-enrich)
+    src/
+      Enrichers/     # Per-library enricher modules
+        Express.hs
+        React.hs
+        TypePropagation.hs
+
+  grafema-common/    # Shared: SemanticId, MetaValue, GraphNode types, Protocol
+```
+
+**Key insight:** `core-v3` works with ASTNode (OXC ESTree JSON). Resolvers and enrichers work with GraphNode (RFDB graph JSON). Different input types → separate packages. `grafema-common` holds shared types including GraphNode ADT and the streaming protocol.
+
+Binaries:
+```
+grafema-core-v3          # JS/TS per-file analyzer (Haskell, ASTNode → GraphNode)
+grafema-resolve          # Cross-file resolution plugins (Haskell, GraphNode → edges)
+grafema-enrich           # Enrichment plugins (Haskell, GraphNode → enriched graph)
+grafema-java             # Java per-file analyzer (Haskell, future)
+grafema-enrich-django    # Django enrichment (Python, future)
+```
+
+### Decision 8: FactStore — DEFERRED
+
+**Original problem:** Datalog needs EDB tables for intermediate data: unresolvedRefs, LibraryDefs, config routing, framework hints.
+
+**Revised status: DEFERRED.** The primary use case (unresolvedRefs) no longer needs FactStore — unresolvedRefs are internal to the Haskell binary, consumed during postFile scope resolve, never serialized. The remaining use cases:
+
+- `library_export` → can be plugin config or graph nodes (EXPORT_BINDING nodes already exist)
+- `file_pattern` → orchestrator config, not runtime data
+- Framework hints → LibraryDef data, loaded by the Haskell binary directly
+
+**Decision:** Don't build FactStore until a concrete need arises. Keep the SQLite design as a documented option for future use:
+
+<details>
+<summary>SQLite FactStore design (preserved for future reference)</summary>
+
+Use SQLite via `rusqlite` (with `bundled` feature) as the FactStore alongside GraphStore.
+
+```
+RFDB
+├── GraphStore (nodes, edges)       ← existing engine, disk-backed segments
+├── FactStore (SQLite via rusqlite) ← FUTURE, for EDB tables if needed
+└── Datalog Evaluator
+    ├── node(), edge(), path(), attr()  → GraphStore
+    ├── custom_table(), ...             → FactStore (SQL SELECT)
+    └── derived rules                   → recursive eval
+```
+
+Why SQLite: disk-backed B-tree indexes, observable (`sqlite3` CLI), proven at scale, zero maintenance, ~1MB binary overhead.
+
+Integration with Datalog evaluator:
+```rust
+// In eval_atom():
+match atom.predicate() {
+    "node" | "type" => self.eval_node(atom),
+    "edge" => self.eval_edge(atom),
+    predicate if self.fact_store.has_table(predicate) => {
+        self.fact_store.query(predicate, atom.args())
+    }
+    _ => self.eval_derived(atom),
+}
+```
+</details>
+
+**Current architecture:** GraphStore only. All intermediate data either stays internal to plugins or becomes graph nodes.
+
+### Decision 7: Language split rationale (revised)
+
+| Computation | Language | Why |
+|-------------|----------|-----|
+| Per-file AST → graph | **Haskell** | Exhaustive pattern matching on ~160 OXC ESTree types + postFile scope resolve. Compiler catches missing cases. |
+| Cross-file resolution | **Haskell plugin** | Language-specific (JS/Java/Python each have own resolution semantics). Same plugin protocol as enrichment. |
+| Enrichment | **Haskell** (separate binary) + any language | Pattern matching on graph subsets. Streaming or batch mode. Library-specific rules. |
+| Orchestration | **Rust** | Language-agnostic DAG runner. No resolution logic. File discovery, process management, parallelism, plugin DAG scheduling. |
+| Queries + guarantees | **Datalog** (existing top-down in RFDB) | Unchanged. Works perfectly for `grafema check` and MCP queries. |
+| Storage | **RFDB** (Rust) | GraphStore only. FactStore deferred until concrete need arises. |
+
+**Why resolution moved from Rust orchestrator to Haskell plugins:**
+Resolution is language-specific — JS has ESM/CJS imports, Java has classpath, Python has `__init__.py`. Putting resolution in the Rust orchestrator would leak language semantics into what should be a language-agnostic component. As a Haskell plugin, resolution uses the same mechanism as enrichment: streaming/batch protocol, DAG ordering, buffered writes.
+
+**Orchestrator is fully language-agnostic:** ~300 LOC of plugin DAG runner. Knows nothing about imports, exports, scopes, or any language semantics.
+
+**Datalog stays for queries/guarantees:** The existing top-down evaluator is perfect for `grafema check` and MCP queries. No changes needed.
+
+### Resolved Questions
+
+**Q1: DAG dependencies** → **Explicit `depends_on` in config.yaml.** Applies to all plugin types (analysis, enrichment, validation). Orchestrator topologically sorts, runs independent plugins in parallel. Revisit if bugs arise from manual dependency declaration.
+
+**Q2: Enrichment plugin protocol** → **Two modes: streaming (stdin/stdout JSON lines) + batch (RFDB socket via env var).** See Decision 6a for full protocol spec. Each enricher declares its mode in config.
+
+**Q3: Incremental enrichment** → **Generation GC + selective re-run.** On single-file change:
+1. Re-analyze changed file (Haskell Phase 1, includes postFile scope resolve)
+2. Re-run resolution plugins for affected imports (Phase 2 — fast, plugin queries only changed file's IMPORT_BINDINGs)
+3. Re-run enrichment plugins whose input query matches changed file's nodes (Phase 2)
+4. Generation GC deletes stale facts from previous run
+Performance concern deferred — measure first, optimize if needed.
+
+**Q4: Haskell binary contract** — Two modes, both JSON:
+
+**Analyze mode** (per-file, Phase 1):
+```
+grafema-core-v3 analyze < ast.json > analysis.json
+```
+```json
+{
+  "nodes": [
+    {"id": "...", "type": "FUNCTION", "name": "foo", ...},
+    {"id": "...", "type": "REFERENCE", "name": "y", "resolved": false, ...},
+    {"id": "...", "type": "IMPORT_BINDING", "name": "express", "source": "./express", ...}
+  ],
+  "edges": [
+    {"from": "id1", "to": "id2", "type": "READS_FROM", ...}
+  ],
+  "exports": [{"name": "foo", "nodeId": "...", ...}]
+}
+```
+
+No `unresolvedRefs` field. Unresolved identifiers are REFERENCE nodes with `resolved: false`. Imports are IMPORT_BINDING nodes. Both are regular graph nodes emitted in the `nodes` array.
+
+**Enrich/resolve mode** (streaming, Phase 2 plugins):
+```
+grafema-resolve imports < input.jsonl > output.jsonl
+grafema-enrich express < input.jsonl > output.jsonl
+```
+Input: JSON lines with nodes + edges (per plugin query spec).
+Output: JSON lines with emit_node / emit_edge commands.
+
+Both contracts are language-independent — any binary/script that implements them works as a plugin.
+
 ## Related
 
 - [Theoretical Foundations](./theoretical-foundations.md) — 5 abstraction levels, Cognitive Dimensions
 - [Declarative Semantic Rules](./declarative-semantic-rules.md) — completeness model, rules matrix
 - [Sociotechnical Graph Model](./sociotechnical-graph-model.md) — 12 projections, inter-projection edges
-- [01-semantic.md](./projections/01-semantic.md) — all 253 Babel AST types mapped to semantic edges
+- [01-semantic.md](./projections/01-semantic.md) — all ~160 OXC ESTree types mapped to semantic edges

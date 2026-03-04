@@ -4,6 +4,8 @@ node_modules/
 # Build output
 dist/
 *.tsbuildinfo
+target/
+dist-newstyle/
 
 # IDE
 .idea/
@@ -50,6 +52,7 @@ coverage/
 **/.grafema/graph.rfdb/
 **/.grafema/rfdb.sock
 **/.grafema/diagnostics.log
+**/.grafema/rfdb.pid
 .eslintcache
 
 # QA automation screenshots (large, ephemeral, regenerable)

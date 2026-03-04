@@ -151,11 +151,12 @@ ruleTSTypeReference node = do
       fromId = case encFn of
         Just fnId -> fnId
         Nothing   -> moduleId
+  curScopeId <- askScopeId
   emitDeferred DeferredRef
     { drKind = TypeResolve, drName = name
     , drFromNodeId = fromId
     , drEdgeType = "REFERS_TO_TYPE"
-    , drScopeId = Nothing, drSource = Nothing
+    , drScopeId = Just curScopeId, drSource = Nothing
     , drFile = file, drLine = spanStart sp, drColumn = 0
     , drReceiver = Nothing, drMetadata = Map.empty
     }

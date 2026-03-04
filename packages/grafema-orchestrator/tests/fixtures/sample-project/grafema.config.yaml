@@ -1,0 +1,6 @@
+root: "."
+include:
+  - "src/**/*.js"
+  - "src/**/*.ts"
+exclude:
+  - "src/**/*.spec.js"

@@ -36,7 +36,7 @@ import Data.Foldable (forM_)
 import Analysis.Types
 import Analysis.Context
 import {-# SOURCE #-} Analysis.Walker (walkNode)
-import Analysis.Scope (withScope)
+import Analysis.Scope (withScope, declareInScope)
 import Analysis.SemanticId (semanticId, contentHash)
 import AST.Types
 import AST.Span (Span(..))
@@ -65,10 +65,11 @@ ruleCallExpression node = do
     , gnMetadata = Map.empty
     }
 
+  curScopeId <- askScopeId
   emitDeferred DeferredRef
     { drKind = CallResolve, drName = callee
     , drFromNodeId = nodeId, drEdgeType = "CALLS"
-    , drScopeId = Nothing, drSource = Nothing
+    , drScopeId = Just curScopeId, drSource = Nothing
     , drFile = file, drLine = spanStart sp, drColumn = 0
     , drReceiver = Nothing, drMetadata = Map.empty
     }
@@ -184,28 +185,10 @@ ruleArrowFunction node = do
     }
 
   withEnclosingFn nodeId $ withNamedParent ("<" <> kind <> ">") $ withScope FunctionScope nodeId $ do
-    -- Walk params
-    mapM_ (\p -> do
-      let pName = getTextFieldOr "name" "<param>" p
-          pSp   = astNodeSpan p
-          pId   = semanticId file "PARAMETER" pName (Just ("<" <> kind <> ">")) Nothing
-      emitNode GraphNode
-        { gnId = pId, gnType = "PARAMETER", gnName = pName
-        , gnFile = file, gnLine = spanStart pSp, gnColumn = 0
-        , gnExported = False, gnMetadata = Map.empty
-        }
-      emitEdge GraphEdge
-        { geSource = nodeId, geTarget = pId
-        , geType = "RECEIVES_ARGUMENT", geMetadata = Map.empty
-        }
-      -- Walk param for defaults, destructuring, type annotations
-      withAncestor node (walkNode p) >> return ()
-      ) params
-
-    -- Walk body (discard result)
-    case getChildrenMaybe "body" node of
-      Just body -> withAncestor node (walkNode body) >> return ()
-      Nothing   -> return ()
+    let walkBody = case getChildrenMaybe "body" node of
+          Just body -> withAncestor node (walkNode body) >> return ()
+          Nothing   -> return ()
+    declareArrowParams file ("<" <> kind <> ">") nodeId node params walkBody
 
   return (Just nodeId)
 
@@ -226,11 +209,12 @@ ruleIdentifier node = do
     , gnExported = False, gnMetadata = Map.empty
     }
 
+  curScopeId <- askScopeId
   emitDeferred DeferredRef
     { drKind = ScopeLookup, drName = name
     , drFromNodeId = refId
     , drEdgeType = "READS_FROM"
-    , drScopeId = Nothing, drSource = Nothing
+    , drScopeId = Just curScopeId, drSource = Nothing
     , drFile = file, drLine = spanStart sp, drColumn = 0
     , drReceiver = Nothing, drMetadata = Map.empty
     }
@@ -515,10 +499,11 @@ ruleNewExpression node = do
     , gnMetadata = Map.singleton "kind" (MetaText "new")
     }
 
+  curScopeId <- askScopeId
   emitDeferred DeferredRef
     { drKind = CallResolve, drName = callee
     , drFromNodeId = nodeId, drEdgeType = "CALLS"
-    , drScopeId = Nothing, drSource = Nothing
+    , drScopeId = Just curScopeId, drSource = Nothing
     , drFile = file, drLine = spanStart sp, drColumn = 0
     , drReceiver = Nothing, drMetadata = Map.empty
     }
@@ -722,6 +707,34 @@ ruleImportExpression node = do
     Nothing -> return ()
 
   return (Just nodeId)
+
+-- ── Arrow/FunctionExpression param helpers ──────────────────────────────
+
+-- | Process params with scope accumulation for arrow functions / function expressions.
+-- Each param is declared in scope for subsequent params and the body action.
+declareArrowParams :: Text -> Text -> Text -> ASTNode -> [ASTNode] -> Analyzer () -> Analyzer ()
+declareArrowParams _file _fnName _fnNodeId _parentNode [] bodyAction = bodyAction
+declareArrowParams file fnName fnNodeId parentNode (p:ps) bodyAction = do
+  let pName = getTextFieldOr "name" "<param>" p
+      pId   = semanticId file "PARAMETER" pName (Just fnName) Nothing
+  curScopeId <- askScopeId
+  emitNode GraphNode
+    { gnId = pId, gnType = "PARAMETER", gnName = pName
+    , gnFile = file, gnLine = spanStart (astNodeSpan p), gnColumn = 0
+    , gnExported = False, gnMetadata = Map.empty
+    }
+  emitEdge GraphEdge
+    { geSource = fnNodeId, geTarget = pId
+    , geType = "RECEIVES_ARGUMENT", geMetadata = Map.empty
+    }
+  emitEdge GraphEdge
+    { geSource = curScopeId, geTarget = pId
+    , geType = "DECLARES", geMetadata = Map.empty
+    }
+  -- Walk param for defaults, destructuring, type annotations
+  withAncestor parentNode (walkNode p) >> return ()
+  declareInScope (Declaration pId DeclParam pName) $
+    declareArrowParams file fnName fnNodeId parentNode ps bodyAction
 
 -- ── Helpers ─────────────────────────────────────────────────────────────
 

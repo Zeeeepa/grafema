@@ -1,1 +1,3 @@
 packages: .
+         ../grafema-common
+         ../grafema-resolve

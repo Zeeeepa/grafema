@@ -7,6 +7,7 @@ module Analysis.Context
   , emitNode
   , emitEdge
   , emitDeferred
+  , emitExport
   , askFile
   , askModuleId
   , askScope
@@ -72,6 +73,9 @@ emitEdge e = tell mempty { faEdges = [e] }
 
 emitDeferred :: DeferredRef -> Analyzer ()
 emitDeferred d = tell mempty { faUnresolvedRefs = [d] }
+
+emitExport :: ExportInfo -> Analyzer ()
+emitExport e = tell mempty { faExports = [e] }
 
 -- ── Context accessors ───────────────────────────────────────────────────
 
