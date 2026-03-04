@@ -6,3 +6,4 @@ pub mod parser;
 pub mod plugin;
 pub mod process_pool;
 pub mod rfdb;
+pub mod rust_parser;

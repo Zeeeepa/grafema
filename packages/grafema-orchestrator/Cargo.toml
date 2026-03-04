@@ -30,6 +30,9 @@ oxc_parser = "0.116"
 oxc_ast = { version = "0.116", features = ["serialize"] }
 oxc_allocator = "0.116"
 oxc_span = "0.116"
+syn = { version = "2", features = ["full", "extra-traits", "parsing"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
 
 [dev-dependencies]
 tempfile = "3"

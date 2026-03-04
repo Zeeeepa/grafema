@@ -59,7 +59,7 @@ struct EmitNode {
     id: String,
     #[serde(default)]
     semantic_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "nodeType")]
     node_type: Option<String>,
     #[serde(default)]
     name: Option<String>,
@@ -75,6 +75,7 @@ struct EmitNode {
 struct EmitEdge {
     src: String,
     dst: String,
+    #[serde(alias = "edgeType")]
     edge_type: String,
     #[serde(default)]
     metadata: Option<String>,

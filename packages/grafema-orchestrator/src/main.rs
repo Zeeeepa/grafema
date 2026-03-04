@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
                 .await
                 .with_context(|| format!("Failed to connect to RFDB at {}", socket_path.display()))?;
 
-            let db_name = "grafema";
+            let db_name = "default";
             rfdb.create_database(db_name, false).await?;
             rfdb.open_database(db_name, "rw").await?;
             tracing::info!(db = db_name, "Connected to RFDB");
@@ -104,10 +104,49 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
 
-            // 4. Analyze changed files in parallel (OXC parse → grafema-analyzer daemon pool)
-            let results = analyzer::analyze_files_parallel_pooled(&changed_files, jobs).await;
+            // 3b. Partition by language
+            let (js_files, hs_files, rs_files) = config::partition_by_language(&changed_files);
+            tracing::info!(
+                js = js_files.len(),
+                haskell = hs_files.len(),
+                rust = rs_files.len(),
+                "Partitioned files by language"
+            );
 
-            // 5. Ingest results into RFDB (deferred indexing for performance)
+            // 4. Analyze files by language
+            let mut results = Vec::new();
+
+            // 4a. Analyze JS/TS files (OXC parse → grafema-analyzer daemon pool)
+            if !js_files.is_empty() {
+                tracing::info!(count = js_files.len(), "Analyzing JS/TS files");
+                let js_results = analyzer::analyze_files_parallel_pooled(&js_files, jobs).await;
+                results.extend(js_results);
+            }
+
+            // 4b. Analyze Haskell files (haskell-analyzer daemon pool, no OXC)
+            if !hs_files.is_empty() {
+                tracing::info!(count = hs_files.len(), "Analyzing Haskell files");
+                let hs_results = analyzer::analyze_haskell_files_parallel_pooled(&hs_files, jobs).await;
+                results.extend(hs_results);
+            }
+
+            // 4c. Analyze Rust files (syn parse in orchestrator → grafema-rust-analyzer daemon pool)
+            if !rs_files.is_empty() {
+                tracing::info!(count = rs_files.len(), "Analyzing Rust files");
+                let rs_results = analyzer::analyze_rust_files_parallel_pooled(&rs_files, jobs).await;
+                results.extend(rs_results);
+            }
+
+            // 5. Relativize paths: convert absolute → relative (to project root)
+            //    VS Code and CLI query with relative paths, so RFDB must store relative paths.
+            let root_str = cfg.root.display().to_string();
+            for result in &mut results {
+                if let Some(ref mut analysis) = result.analysis {
+                    analysis.relativize_paths(&root_str);
+                }
+            }
+
+            // 6. Ingest results into RFDB (deferred indexing for performance)
             let mut total_nodes = 0usize;
             let mut total_edges = 0usize;
             let mut total_errors = 0usize;
@@ -135,8 +174,9 @@ async fn main() -> Result<()> {
                     total_nodes += wire_nodes.len();
                     total_edges += wire_edges.len();
 
-                    let file_str = result.file.display().to_string();
-                    rfdb.commit_batch(&[file_str], &wire_nodes, &wire_edges, true)
+                    // Use relativized path for commit_batch file key
+                    let file_str = &analysis.file;
+                    rfdb.commit_batch(&[file_str.clone()], &wire_nodes, &wire_edges, true)
                         .await
                         .with_context(|| {
                             format!("Failed to commit batch for {}", result.file.display())
@@ -154,12 +194,18 @@ async fn main() -> Result<()> {
                 "Analysis complete"
             );
 
-            // 6. Handle deleted files
+            // 7. Handle deleted files
             let deleted = gc::detect_deleted_files(&gen_tracker, &files);
             if !deleted.is_empty() {
                 tracing::info!(count = deleted.len(), "Cleaning up deleted files");
+                let root_prefix = if root_str.ends_with('/') {
+                    root_str.clone()
+                } else {
+                    format!("{root_str}/")
+                };
                 for del_file in &deleted {
-                    let file_str = del_file.display().to_string();
+                    let abs_str = del_file.display().to_string();
+                    let file_str = abs_str.strip_prefix(&root_prefix).unwrap_or(&abs_str).to_string();
                     rfdb.commit_batch(&[file_str], &[], &[], false).await?;
                 }
             }
@@ -239,6 +285,62 @@ async fn main() -> Result<()> {
                             "Runtime globals resolution complete"
                         );
 
+                        // Step 3: Builtins resolution (Node.js builtin modules)
+                        let mut builtins_output = plugin::run_resolve_with_nodes(
+                            "builtins",
+                            &resolve_nodes,
+                            &resolve_pool,
+                        )
+                        .await
+                        .context("Builtins resolution failed")?;
+                        plugin::validate_plugin_output(&builtins_output)?;
+                        plugin::stamp_metadata(&mut builtins_output, "builtins", generation);
+
+                        let builtins_files: Vec<String> = builtins_output
+                            .nodes
+                            .iter()
+                            .filter_map(|n| n.file.clone())
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        rfdb.commit_batch(&builtins_files, &builtins_output.nodes, &builtins_output.edges, false)
+                            .await
+                            .context("Failed to commit builtins resolution output")?;
+
+                        tracing::info!(
+                            nodes = builtins_output.nodes.len(),
+                            edges = builtins_output.edges.len(),
+                            "Builtins resolution complete"
+                        );
+
+                        // Step 4: Cross-file CALLS resolution
+                        let mut cross_file_output = plugin::run_resolve_with_nodes(
+                            "cross-file-calls",
+                            &resolve_nodes,
+                            &resolve_pool,
+                        )
+                        .await
+                        .context("Cross-file CALLS resolution failed")?;
+                        plugin::validate_plugin_output(&cross_file_output)?;
+                        plugin::stamp_metadata(&mut cross_file_output, "cross-file-calls", generation);
+
+                        let cross_file_files: Vec<String> = cross_file_output
+                            .nodes
+                            .iter()
+                            .filter_map(|n| n.file.clone())
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        rfdb.commit_batch(&cross_file_files, &cross_file_output.nodes, &cross_file_output.edges, false)
+                            .await
+                            .context("Failed to commit cross-file CALLS output")?;
+
+                        tracing::info!(
+                            nodes = cross_file_output.nodes.len(),
+                            edges = cross_file_output.edges.len(),
+                            "Cross-file CALLS resolution complete"
+                        );
+
                         resolve_pool.shutdown().await;
                     }
                     Err(e) => {
@@ -249,7 +351,117 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8b. Run user-defined plugins via DAG (if any non-default plugins configured)
+            // 8a. Run Haskell import resolution (if Haskell files were analyzed)
+            if !hs_files.is_empty() {
+                let hs_resolve_nodes = analyzer::collect_resolve_nodes(&results);
+                if !hs_resolve_nodes.is_empty() {
+                    tracing::info!(
+                        nodes = hs_resolve_nodes.len(),
+                        "Running Haskell import resolution"
+                    );
+
+                    let hs_resolve_pool_config = process_pool::PoolConfig {
+                        command: "haskell-resolve".to_string(),
+                        args: vec!["--daemon".to_string()],
+                        ..process_pool::PoolConfig::default()
+                    };
+
+                    match process_pool::ProcessPool::new(hs_resolve_pool_config, 1) {
+                        Ok(hs_resolve_pool) => {
+                            let mut hs_import_output = plugin::run_resolve_with_nodes(
+                                "haskell-imports",
+                                &hs_resolve_nodes,
+                                &hs_resolve_pool,
+                            )
+                            .await
+                            .context("Haskell import resolution failed")?;
+                            plugin::validate_plugin_output(&hs_import_output)?;
+                            plugin::stamp_metadata(&mut hs_import_output, "haskell-import-resolution", generation);
+
+                            let hs_import_files: Vec<String> = hs_import_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&hs_import_files, &hs_import_output.nodes, &hs_import_output.edges, false)
+                                .await
+                                .context("Failed to commit Haskell import resolution output")?;
+
+                            tracing::info!(
+                                nodes = hs_import_output.nodes.len(),
+                                edges = hs_import_output.edges.len(),
+                                "Haskell import resolution complete"
+                            );
+
+                            hs_resolve_pool.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create Haskell resolve pool, skipping Haskell import resolution: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 8b. Run Rust import resolution (if Rust files were analyzed)
+            if !rs_files.is_empty() {
+                let rs_resolve_nodes = analyzer::collect_resolve_nodes(&results);
+                if !rs_resolve_nodes.is_empty() {
+                    tracing::info!(
+                        nodes = rs_resolve_nodes.len(),
+                        "Running Rust import resolution"
+                    );
+
+                    let rs_resolve_pool_config = process_pool::PoolConfig {
+                        command: "grafema-rust-resolve".to_string(),
+                        args: vec!["--daemon".to_string()],
+                        ..process_pool::PoolConfig::default()
+                    };
+
+                    match process_pool::ProcessPool::new(rs_resolve_pool_config, 1) {
+                        Ok(rs_resolve_pool) => {
+                            let mut rs_import_output = plugin::run_resolve_with_nodes(
+                                "rust-imports",
+                                &rs_resolve_nodes,
+                                &rs_resolve_pool,
+                            )
+                            .await
+                            .context("Rust import resolution failed")?;
+                            plugin::validate_plugin_output(&rs_import_output)?;
+                            plugin::stamp_metadata(&mut rs_import_output, "rust-import-resolution", generation);
+
+                            let rs_import_files: Vec<String> = rs_import_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&rs_import_files, &rs_import_output.nodes, &rs_import_output.edges, false)
+                                .await
+                                .context("Failed to commit Rust import resolution output")?;
+
+                            tracing::info!(
+                                nodes = rs_import_output.nodes.len(),
+                                edges = rs_import_output.edges.len(),
+                                "Rust import resolution complete"
+                            );
+
+                            rs_resolve_pool.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create Rust resolve pool, skipping Rust import resolution: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 8c. Run user-defined plugins via DAG (if any non-default plugins configured)
             let user_plugins: Vec<_> = cfg
                 .plugins
                 .iter()
@@ -297,8 +509,11 @@ async fn main() -> Result<()> {
 
             // 9. Summary
             println!(
-                "Analyzed {} files ({} skipped): {} nodes, {} edges, {} errors",
+                "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} skipped): {} nodes, {} edges, {} errors",
                 changed_files.len(),
+                js_files.len(),
+                hs_files.len(),
+                rs_files.len(),
                 unchanged_files.len(),
                 total_nodes,
                 total_edges,

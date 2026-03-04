@@ -26,6 +26,40 @@ pub struct AnalyzerConfig {
     /// Path to RFDB unix socket (overridable via CLI)
     #[serde(default = "default_rfdb_socket")]
     pub rfdb_socket: Option<PathBuf>,
+
+    /// Analyzer binary path overrides
+    #[serde(default)]
+    pub analyzers: AnalyzerBinaries,
+}
+
+/// Optional overrides for analyzer binary paths.
+/// When not specified, defaults are used:
+/// - JS/TS: "grafema-analyzer"
+/// - Haskell: "haskell-analyzer"
+/// - Rust: "grafema-rust-analyzer"
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnalyzerBinaries {
+    /// Path to JS/TS analyzer binary (default: "grafema-analyzer")
+    #[serde(default = "default_js_analyzer")]
+    pub js: String,
+
+    /// Path to Haskell analyzer binary (default: "haskell-analyzer")
+    #[serde(default = "default_haskell_analyzer")]
+    pub haskell: String,
+
+    /// Path to Rust analyzer binary (default: "grafema-rust-analyzer")
+    #[serde(default = "default_rust_analyzer")]
+    pub rust: String,
+}
+
+impl Default for AnalyzerBinaries {
+    fn default() -> Self {
+        Self {
+            js: default_js_analyzer(),
+            haskell: default_haskell_analyzer(),
+            rust: default_rust_analyzer(),
+        }
+    }
 }
 
 /// Plugin configuration.
@@ -109,6 +143,54 @@ fn default_root() -> PathBuf {
 
 fn default_rfdb_socket() -> Option<PathBuf> {
     Some(PathBuf::from("/tmp/rfdb.sock"))
+}
+
+fn default_js_analyzer() -> String {
+    "grafema-analyzer".to_string()
+}
+
+fn default_haskell_analyzer() -> String {
+    "haskell-analyzer".to_string()
+}
+
+fn default_rust_analyzer() -> String {
+    "grafema-rust-analyzer".to_string()
+}
+
+/// Language detection based on file extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Language {
+    JavaScript,
+    Haskell,
+    Rust,
+}
+
+/// Detect language from file extension.
+pub fn detect_language(path: &Path) -> Option<Language> {
+    match path.extension()?.to_str()? {
+        "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts" => {
+            Some(Language::JavaScript)
+        }
+        "hs" => Some(Language::Haskell),
+        "rs" => Some(Language::Rust),
+        _ => None,
+    }
+}
+
+/// Partition files by detected language.
+pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+    let mut js_files = Vec::new();
+    let mut hs_files = Vec::new();
+    let mut rs_files = Vec::new();
+    for file in files {
+        match detect_language(file) {
+            Some(Language::JavaScript) => js_files.push(file.clone()),
+            Some(Language::Haskell) => hs_files.push(file.clone()),
+            Some(Language::Rust) => rs_files.push(file.clone()),
+            None => {} // skip unknown extensions
+        }
+    }
+    (js_files, hs_files, rs_files)
 }
 
 /// Load and validate configuration from a YAML file.
@@ -424,5 +506,109 @@ plugins:
         assert_eq!(cfg.plugins.len(), 1);
         assert_eq!(cfg.plugins[0].name, "custom-plugin");
         cleanup(&dir);
+    }
+
+    #[test]
+    fn detect_language_js_extensions() {
+        for ext in &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"] {
+            let path = PathBuf::from(format!("src/app.{ext}"));
+            assert_eq!(
+                detect_language(&path),
+                Some(Language::JavaScript),
+                "expected JavaScript for .{ext}"
+            );
+        }
+    }
+
+    #[test]
+    fn detect_language_haskell() {
+        let path = PathBuf::from("src/Main.hs");
+        assert_eq!(detect_language(&path), Some(Language::Haskell));
+    }
+
+    #[test]
+    fn detect_language_unknown_returns_none() {
+        assert_eq!(detect_language(Path::new("README.md")), None);
+        assert_eq!(detect_language(Path::new("Makefile")), None);
+        assert_eq!(detect_language(Path::new("src/main.py")), None);
+    }
+
+    #[test]
+    fn partition_by_language_splits_correctly() {
+        let files = vec![
+            PathBuf::from("src/index.ts"),
+            PathBuf::from("src/Main.hs"),
+            PathBuf::from("src/app.jsx"),
+            PathBuf::from("src/Lib.hs"),
+            PathBuf::from("src/main.rs"),
+            PathBuf::from("src/lib.rs"),
+            PathBuf::from("README.md"),
+        ];
+        let (js, hs, rs) = partition_by_language(&files);
+        assert_eq!(js, vec![PathBuf::from("src/index.ts"), PathBuf::from("src/app.jsx")]);
+        assert_eq!(hs, vec![PathBuf::from("src/Main.hs"), PathBuf::from("src/Lib.hs")]);
+        assert_eq!(rs, vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")]);
+    }
+
+    #[test]
+    fn partition_by_language_empty_input() {
+        let (js, hs, rs) = partition_by_language(&[]);
+        assert!(js.is_empty());
+        assert!(hs.is_empty());
+        assert!(rs.is_empty());
+    }
+
+    #[test]
+    fn detect_language_rust() {
+        let path = PathBuf::from("src/main.rs");
+        assert_eq!(detect_language(&path), Some(Language::Rust));
+    }
+
+    #[test]
+    fn config_with_analyzers_field_deserializes() {
+        let dir = test_dir();
+        let yaml = format!(
+            r#"
+root: "{}"
+include:
+  - "**/*.js"
+analyzers:
+  js: "/usr/local/bin/my-js-analyzer"
+  haskell: "/usr/local/bin/my-hs-analyzer"
+  rust: "/usr/local/bin/my-rust-analyzer"
+"#,
+            dir.display()
+        );
+        let config_path = write_config(&dir, &yaml);
+        let cfg = load(&config_path).unwrap();
+        assert_eq!(cfg.analyzers.js, "/usr/local/bin/my-js-analyzer");
+        assert_eq!(cfg.analyzers.haskell, "/usr/local/bin/my-hs-analyzer");
+        assert_eq!(cfg.analyzers.rust, "/usr/local/bin/my-rust-analyzer");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn config_without_analyzers_gets_defaults() {
+        let dir = test_dir();
+        let config_path = write_config(
+            &dir,
+            &format!(
+                "root: \"{}\"\ninclude:\n  - \"**/*.js\"\n",
+                dir.display()
+            ),
+        );
+        let cfg = load(&config_path).unwrap();
+        assert_eq!(cfg.analyzers.js, "grafema-analyzer");
+        assert_eq!(cfg.analyzers.haskell, "haskell-analyzer");
+        assert_eq!(cfg.analyzers.rust, "grafema-rust-analyzer");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn analyzer_binaries_default_values() {
+        let defaults = AnalyzerBinaries::default();
+        assert_eq!(defaults.js, "grafema-analyzer");
+        assert_eq!(defaults.haskell, "haskell-analyzer");
+        assert_eq!(defaults.rust, "grafema-rust-analyzer");
     }
 }

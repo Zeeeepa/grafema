@@ -229,6 +229,7 @@ mod tests {
             exclude: vec![],
             plugins: vec![],
             rfdb_socket: None,
+            analyzers: Default::default(),
         };
 
         let files = discover(&config).unwrap();

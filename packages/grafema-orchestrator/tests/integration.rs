@@ -272,6 +272,8 @@ mod wire_conversion {
                 file: "src/test.js".to_string(),
                 line: 1,
                 column: 0,
+                end_line: 0,
+                end_column: 0,
                 exported: true,
                 metadata: HashMap::new(),
             }],
@@ -313,6 +315,8 @@ mod wire_conversion {
                 file: "test.js".to_string(),
                 line: 1,
                 column: 6,
+                end_line: 0,
+                end_column: 0,
                 exported: false,
                 metadata: {
                     let mut m = HashMap::new();

@@ -1,9 +1,15 @@
 //! Analysis spawning: parse with OXC -> pipe to grafema-analyzer -> ingest into RFDB.
 //!
-//! The pipeline for each file:
+//! The pipeline for each JS/TS file:
 //! 1. Parse source with OXC (via `crate::parser::parse_file`) -> ESTree JSON
 //! 2. Spawn `grafema-analyzer <filepath>`, pipe the JSON to stdin
 //! 3. Read stdout as `FileAnalysis` JSON
+//! 4. Convert to RFDB wire types (`WireNode`, `WireEdge`) for ingestion
+//!
+//! The pipeline for each Haskell file:
+//! 1. Read source from disk (no OXC step — haskell-analyzer parses internally via ghc-lib-parser)
+//! 2. Spawn `haskell-analyzer <filepath>`, pipe `{"file":"...","source":"..."}` to stdin
+//! 3. Read stdout as `FileAnalysis` JSON (same output format as JS analyzer)
 //! 4. Convert to RFDB wire types (`WireNode`, `WireEdge`) for ingestion
 
 use anyhow::{bail, Context, Result};
@@ -42,6 +48,10 @@ pub struct GraphNode {
     pub file: String,
     pub line: i64,
     pub column: i64,
+    #[serde(rename = "endLine", default)]
+    pub end_line: i64,
+    #[serde(rename = "endColumn", default)]
+    pub end_column: i64,
     pub exported: bool,
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
@@ -64,6 +74,36 @@ pub struct ExportInfo {
     pub node_id: String,
     pub kind: String,
     pub source: Option<String>,
+}
+
+impl FileAnalysis {
+    /// Strip an absolute root prefix from all paths (file fields, node IDs, edge src/dst).
+    ///
+    /// The graph consumers (VS Code extension, CLI) query with relative paths,
+    /// so we must store relative paths in RFDB.
+    pub fn relativize_paths(&mut self, root: &str) {
+        let prefix = if root.ends_with('/') {
+            root.to_string()
+        } else {
+            format!("{root}/")
+        };
+        let strip = |s: &str| -> String {
+            s.strip_prefix(&prefix).unwrap_or(s).to_string()
+        };
+        self.file = strip(&self.file);
+        self.module_id = strip(&self.module_id);
+        for node in &mut self.nodes {
+            node.id = strip(&node.id);
+            node.file = strip(&node.file);
+        }
+        for edge in &mut self.edges {
+            edge.src = strip(&edge.src);
+            edge.dst = strip(&edge.dst);
+        }
+        for export in &mut self.exports {
+            export.node_id = strip(&export.node_id);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +191,85 @@ pub async fn analyze_file(file: &Path, ast_json: &str) -> Result<FileAnalysis> {
 }
 
 // ---------------------------------------------------------------------------
+// Haskell single-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Haskell file: read source, run haskell-analyzer, return FileAnalysis.
+///
+/// Unlike JS analysis, there is no OXC parsing step — `haskell-analyzer` parses
+/// internally via ghc-lib-parser. The payload sent to stdin is
+/// `{"file":"<filepath>","source":"<source_text>"}` (raw source, not an AST).
+///
+/// Returns `Err` if the file cannot be read, the analyzer binary cannot be
+/// spawned, the analyzer exits non-zero, or its output is not valid
+/// `FileAnalysis` JSON.
+pub async fn analyze_haskell_file(file: &Path) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Haskell source file {file_str}"))?;
+
+    let mut child = tokio::process::Command::new("haskell-analyzer")
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn haskell-analyzer for {file_str}"))?;
+
+    // Build JSON payload: {"file":"...","source":"..."}
+    let payload = serde_json::json!({
+        "file": file_str,
+        "source": source,
+    });
+
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for haskell-analyzer")?;
+        stdin
+            .write_all(payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write source to haskell-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close haskell-analyzer stdin for {file_str}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for haskell-analyzer for {file_str}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        anyhow::bail!(
+            "haskell-analyzer exited with code {code} for {file_str}: {stderr}"
+        );
+    }
+
+    let stdout = &output.stdout;
+    let analysis: FileAnalysis = serde_json::from_slice(stdout).with_context(|| {
+        let preview = String::from_utf8_lossy(&stdout[..stdout.len().min(200)]);
+        format!(
+            "Failed to parse haskell-analyzer output as FileAnalysis for {file_str}: {preview}"
+        )
+    })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
 // Daemon-mode analysis via ProcessPool
 // ---------------------------------------------------------------------------
 
@@ -195,6 +314,52 @@ pub async fn analyze_file_pooled(
         "error" => {
             let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
             bail!("grafema-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown daemon response status '{other}' for {file_str}"),
+    }
+}
+
+/// Analyze a single Haskell file via a persistent daemon process pool.
+///
+/// Reads the source file from disk, builds a `{"file":"...","source":"..."}`
+/// JSON request via string concatenation (avoids parsing the source into Value),
+/// sends it as a length-prefixed frame through the pool, and parses the JSON
+/// response.
+pub async fn analyze_haskell_file_pooled(
+    pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Haskell source file {file_str}"))?;
+
+    // Build JSON request by concatenation — both file path and source are JSON-escaped.
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let response_bytes = pool
+        .request(payload.as_bytes())
+        .await
+        .with_context(|| format!("Pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&response_bytes)
+        .with_context(|| format!("Failed to decode response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("Daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("haskell-analyzer daemon error for {file_str}: {msg}")
         }
         other => bail!("Unknown daemon response status '{other}' for {file_str}"),
     }
@@ -326,6 +491,429 @@ pub async fn analyze_files_parallel_pooled(
 }
 
 // ---------------------------------------------------------------------------
+// Haskell parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Haskell files in parallel using persistent daemon processes.
+///
+/// Creates a `ProcessPool` with `haskell-analyzer --daemon` workers, reads
+/// source files from disk, and sends them through the pool. Falls back to
+/// `analyze_haskell_files_parallel` if pool creation fails.
+pub async fn analyze_haskell_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+) -> Vec<AnalysisResult> {
+    let pool_config = PoolConfig {
+        command: "haskell-analyzer".to_string(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let pool = match ProcessPool::new(pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create haskell-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_haskell_files_parallel(files, jobs).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let pool = Arc::clone(&pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Haskell file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                // No OXC parsing step — send source directly to haskell-analyzer
+                match analyze_haskell_file_pooled(&pool, &file).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Haskell analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Haskell analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple Haskell files in parallel with bounded concurrency (spawn mode).
+///
+/// For each file:
+/// 1. Read source from disk (no OXC parsing — haskell-analyzer parses internally)
+/// 2. Spawn `haskell-analyzer` asynchronously, pipe the source JSON
+/// 3. Collect `FileAnalysis` or error
+///
+/// `jobs` controls the maximum number of concurrent analyses. A tokio
+/// `Semaphore` enforces the bound. Failures in individual files do not stop
+/// other files from being analyzed.
+pub async fn analyze_haskell_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Haskell file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_haskell_file(&file).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Haskell analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Haskell analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Rust single-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Rust file: parse with syn (via rust_parser), run grafema-rust-analyzer.
+///
+/// Pipeline:
+/// 1. Parse .rs file with syn (in orchestrator via crate::rust_parser) -> AST JSON
+/// 2. Spawn `grafema-rust-analyzer`, pipe {"file":"...","ast":...} to stdin
+/// 3. Read stdout as FileAnalysis JSON
+pub async fn analyze_rust_file(file: &Path, ast_json: &str) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let mut child = tokio::process::Command::new("grafema-rust-analyzer")
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn grafema-rust-analyzer for {file_str}"))?;
+
+    let payload = serde_json::json!({
+        "file": file_str,
+        "ast": serde_json::from_str::<serde_json::Value>(ast_json)
+            .unwrap_or(serde_json::Value::Null),
+    });
+
+    {
+        let stdin = child.stdin.as_mut()
+            .context("Failed to open stdin for grafema-rust-analyzer")?;
+        stdin.write_all(payload.to_string().as_bytes()).await
+            .with_context(|| format!("Failed to write AST to grafema-rust-analyzer stdin for {file_str}"))?;
+        stdin.shutdown().await
+            .with_context(|| format!("Failed to close grafema-rust-analyzer stdin for {file_str}"))?;
+    }
+
+    let output = child.wait_with_output().await
+        .with_context(|| format!("Failed to wait for grafema-rust-analyzer for {file_str}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output.status.code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        anyhow::bail!("grafema-rust-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let stdout = &output.stdout;
+    let analysis: FileAnalysis = serde_json::from_slice(stdout).with_context(|| {
+        let preview = String::from_utf8_lossy(&stdout[..stdout.len().min(200)]);
+        format!("Failed to parse grafema-rust-analyzer output for {file_str}: {preview}")
+    })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// Rust daemon-mode analysis via ProcessPool
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Rust file via a persistent daemon process pool.
+///
+/// Parses .rs file with syn (crate::rust_parser), sends AST JSON through pool.
+pub async fn analyze_rust_file_pooled(
+    pool: &ProcessPool,
+    file: &Path,
+    ast_json: &str,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_json);
+
+    let response_bytes = pool
+        .request(payload.as_bytes())
+        .await
+        .with_context(|| format!("Pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&response_bytes)
+        .with_context(|| format!("Failed to decode response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("Daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("grafema-rust-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown daemon response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rust parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Rust files in parallel using persistent daemon processes.
+pub async fn analyze_rust_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+) -> Vec<AnalysisResult> {
+    let pool_config = PoolConfig {
+        command: "grafema-rust-analyzer".to_string(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let pool = match ProcessPool::new(pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create grafema-rust-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_rust_files_parallel(files, jobs).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let pool = Arc::clone(&pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+                tracing::info!("[{}/{}] Analyzing Rust file {}", idx + 1, total, file_display);
+
+                let mut errors = Vec::new();
+
+                // Step 1: Parse with syn (CPU-bound -> spawn_blocking)
+                let parse_result = {
+                    let file_clone = file.clone();
+                    tokio::task::spawn_blocking(move || {
+                        crate::rust_parser::parse_rust_file(&file_clone)
+                    }).await
+                };
+
+                let ast_json = match parse_result {
+                    Ok(Ok(json)) => json,
+                    Ok(Err(e)) => {
+                        errors.push(format!("Rust parse failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors };
+                    }
+                    Err(e) => {
+                        errors.push(format!("Rust parse task panicked for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors };
+                    }
+                };
+
+                // Step 2: Send to daemon pool
+                match analyze_rust_file_pooled(&pool, &file, &ast_json).await {
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Err(e) => {
+                        errors.push(format!("Rust analyzer failed for {file_display}: {e}"));
+                        AnalysisResult { file, analysis: None, errors }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Rust analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple Rust files in parallel with bounded concurrency (spawn mode).
+pub async fn analyze_rust_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+                tracing::info!("[{}/{}] Analyzing Rust file {}", idx + 1, total, file_display);
+
+                let mut errors = Vec::new();
+
+                // Step 1: Parse with syn
+                let ast_json = match crate::rust_parser::parse_rust_file(&file) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        errors.push(format!("Rust parse failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors };
+                    }
+                };
+
+                // Step 2: Spawn analyzer
+                match analyze_rust_file(&file, &ast_json).await {
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Err(e) => {
+                        errors.push(format!("Rust analyzer failed for {file_display}: {e}"));
+                        AnalysisResult { file, analysis: None, errors }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Rust analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
 // Wire-type conversion
 // ---------------------------------------------------------------------------
 
@@ -339,12 +927,14 @@ pub fn to_wire_nodes(analysis: &FileAnalysis) -> Vec<WireNode> {
         .nodes
         .iter()
         .map(|node| {
-            let metadata = if node.metadata.is_empty() {
-                None
-            } else {
-                // Safe: HashMap<String, Value> always serializes successfully.
-                Some(serde_json::to_string(&node.metadata).unwrap())
-            };
+            // Merge line/column/endLine/endColumn into metadata so RFDB stores position info
+            let mut meta = node.metadata.clone();
+            meta.insert("line".to_string(), serde_json::json!(node.line));
+            meta.insert("column".to_string(), serde_json::json!(node.column));
+            meta.insert("endLine".to_string(), serde_json::json!(node.end_line));
+            meta.insert("endColumn".to_string(), serde_json::json!(node.end_column));
+
+            let metadata = Some(serde_json::to_string(&meta).unwrap());
 
             WireNode {
                 id: node.id.clone(),
@@ -390,13 +980,30 @@ pub fn to_wire_edges(analysis: &FileAnalysis) -> Vec<WireEdge> {
 
 /// Node types that the resolution plugin needs.
 const RESOLVE_NODE_TYPES: &[&str] = &[
+    // JS/TS types
     "IMPORT_BINDING",
+    "IMPORT",
     "EXPORT_BINDING",
     "EXPORT",
     "FUNCTION",
     "VARIABLE",
     "CONSTANT",
     "CLASS",
+    "CALL",
+    // Haskell types
+    "TYPE_CLASS",
+    "INSTANCE",
+    "DATA_TYPE",
+    "CONSTRUCTOR",
+    "TYPE_SYNONYM",
+    "TYPE_FAMILY",
+    // Rust types
+    "STRUCT",
+    "ENUM",
+    "VARIANT",
+    "TRAIT",
+    "IMPL_BLOCK",
+    "MODULE",
 ];
 
 /// Collect nodes relevant for cross-file resolution from analysis results.
@@ -559,6 +1166,8 @@ mod tests {
                     file: "src/foo.js".to_string(),
                     line: 10,
                     column: 0,
+                    end_line: 0,
+                    end_column: 0,
                     exported: true,
                     metadata: {
                         let mut m = HashMap::new();
@@ -573,6 +1182,8 @@ mod tests {
                     file: "src/foo.js".to_string(),
                     line: 1,
                     column: 6,
+                    end_line: 0,
+                    end_column: 0,
                     exported: false,
                     metadata: HashMap::new(),
                 },
@@ -624,11 +1235,15 @@ mod tests {
             serde_json::from_str(n0.metadata.as_ref().unwrap()).unwrap();
         assert_eq!(meta["async"], true);
 
-        // Second node: non-exported variable without metadata
+        // Second node: non-exported variable — no user metadata, but line/col injected
         let n1 = &wire[1];
         assert_eq!(n1.id, "src/foo.js->VARIABLE->x");
         assert!(!n1.exported);
-        assert!(n1.metadata.is_none());
+        assert!(n1.metadata.is_some());
+        let meta1: serde_json::Value =
+            serde_json::from_str(n1.metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta1["line"], 1);
+        assert_eq!(meta1["column"], 6);
     }
 
     #[test]
@@ -665,6 +1280,63 @@ mod tests {
         };
         assert!(to_wire_nodes(&analysis).is_empty());
         assert!(to_wire_edges(&analysis).is_empty());
+    }
+
+    #[test]
+    fn relativize_paths_strips_root_prefix() {
+        let mut analysis = FileAnalysis {
+            file: "/home/user/project/src/app.ts".to_string(),
+            module_id: "/home/user/project/src/app.ts".to_string(),
+            nodes: vec![GraphNode {
+                id: "/home/user/project/src/app.ts->FUNCTION->main".to_string(),
+                node_type: "FUNCTION".to_string(),
+                name: "main".to_string(),
+                file: "/home/user/project/src/app.ts".to_string(),
+                line: 1,
+                column: 0,
+                end_line: 10,
+                end_column: 1,
+                exported: true,
+                metadata: HashMap::new(),
+            }],
+            edges: vec![GraphEdge {
+                src: "/home/user/project/src/app.ts->FUNCTION->main".to_string(),
+                dst: "/home/user/project/src/utils.ts->FUNCTION->helper".to_string(),
+                edge_type: "CALLS".to_string(),
+                metadata: HashMap::new(),
+            }],
+            exports: vec![ExportInfo {
+                name: "main".to_string(),
+                node_id: "/home/user/project/src/app.ts->FUNCTION->main".to_string(),
+                kind: "named".to_string(),
+                source: None,
+            }],
+        };
+
+        analysis.relativize_paths("/home/user/project");
+
+        assert_eq!(analysis.file, "src/app.ts");
+        assert_eq!(analysis.module_id, "src/app.ts");
+        assert_eq!(analysis.nodes[0].id, "src/app.ts->FUNCTION->main");
+        assert_eq!(analysis.nodes[0].file, "src/app.ts");
+        assert_eq!(analysis.edges[0].src, "src/app.ts->FUNCTION->main");
+        assert_eq!(analysis.edges[0].dst, "src/utils.ts->FUNCTION->helper");
+        assert_eq!(analysis.exports[0].node_id, "src/app.ts->FUNCTION->main");
+    }
+
+    #[test]
+    fn relativize_paths_noop_for_already_relative() {
+        let mut analysis = FileAnalysis {
+            file: "src/app.ts".to_string(),
+            module_id: "src/app.ts".to_string(),
+            nodes: vec![],
+            edges: vec![],
+            exports: vec![],
+        };
+
+        analysis.relativize_paths("/home/user/project");
+
+        assert_eq!(analysis.file, "src/app.ts");
     }
 
     #[test]
@@ -777,6 +1449,8 @@ mod tests {
                         file: "test.js".to_string(),
                         line: 1,
                         column: 0,
+                        end_line: 0,
+                        end_column: 0,
                         exported: false,
                         metadata: HashMap::new(),
                     },
@@ -787,6 +1461,8 @@ mod tests {
                         file: "test.js".to_string(),
                         line: 5,
                         column: 0,
+                        end_line: 0,
+                        end_column: 0,
                         exported: true,
                         metadata: HashMap::new(),
                     },
@@ -797,6 +1473,8 @@ mod tests {
                         file: "test.js".to_string(),
                         line: 10,
                         column: 0,
+                        end_line: 0,
+                        end_column: 0,
                         exported: false,
                         metadata: HashMap::new(),
                     },
@@ -807,6 +1485,8 @@ mod tests {
                         file: "test.js".to_string(),
                         line: 12,
                         column: 0,
+                        end_line: 0,
+                        end_column: 0,
                         exported: false,
                         metadata: HashMap::new(),
                     },
@@ -818,10 +1498,11 @@ mod tests {
         }];
 
         let nodes = collect_resolve_nodes(&results);
-        // Should include IMPORT_BINDING and FUNCTION, skip REFERENCE and CALL
-        assert_eq!(nodes.len(), 2);
+        // Should include IMPORT_BINDING, FUNCTION, and CALL; skip REFERENCE
+        assert_eq!(nodes.len(), 3);
         assert_eq!(nodes[0]["type"], "IMPORT_BINDING");
         assert_eq!(nodes[1]["type"], "FUNCTION");
+        assert_eq!(nodes[2]["type"], "CALL");
     }
 
     #[test]
@@ -839,6 +1520,8 @@ mod tests {
                         file: "ok.js".to_string(),
                         line: 1,
                         column: 0,
+                        end_line: 0,
+                        end_column: 0,
                         exported: false,
                         metadata: HashMap::new(),
                     }],
@@ -867,6 +1550,178 @@ mod tests {
     }
 
     #[test]
+    fn haskell_daemon_request_json_concatenation() {
+        let file_str = "src/Main.hs";
+        let source = "module Main where\n\nmain :: IO ()\nmain = putStrLn \"hello\"";
+
+        let escaped_file = serde_json::to_string(file_str).unwrap();
+        let escaped_source = serde_json::to_string(source).unwrap();
+        let payload = format!(
+            r#"{{"file":{},"source":{}}}"#,
+            escaped_file, escaped_source
+        );
+
+        let decoded: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(decoded["file"], "src/Main.hs");
+        assert_eq!(
+            decoded["source"],
+            "module Main where\n\nmain :: IO ()\nmain = putStrLn \"hello\""
+        );
+        // Must NOT have an "ast" field — Haskell uses "source" instead
+        assert!(decoded.get("ast").is_none());
+    }
+
+    #[test]
+    fn haskell_daemon_request_escapes_special_chars() {
+        let file_str = "src/Some\"Path.hs";
+        let source = "line1\nline2\ttab\\backslash";
+
+        let escaped_file = serde_json::to_string(file_str).unwrap();
+        let escaped_source = serde_json::to_string(source).unwrap();
+        let payload = format!(
+            r#"{{"file":{},"source":{}}}"#,
+            escaped_file, escaped_source
+        );
+
+        let decoded: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(decoded["file"], "src/Some\"Path.hs");
+        assert_eq!(decoded["source"], "line1\nline2\ttab\\backslash");
+    }
+
+    #[test]
+    fn resolve_node_types_include_haskell_types() {
+        let haskell_types = [
+            "TYPE_CLASS",
+            "INSTANCE",
+            "DATA_TYPE",
+            "CONSTRUCTOR",
+            "TYPE_SYNONYM",
+            "TYPE_FAMILY",
+        ];
+        for hs_type in &haskell_types {
+            assert!(
+                RESOLVE_NODE_TYPES.contains(hs_type),
+                "RESOLVE_NODE_TYPES should contain {hs_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn collect_resolve_nodes_includes_haskell_types() {
+        let results = vec![AnalysisResult {
+            file: PathBuf::from("src/Types.hs"),
+            analysis: Some(FileAnalysis {
+                file: "src/Types.hs".to_string(),
+                module_id: "src/Types.hs".to_string(),
+                nodes: vec![
+                    GraphNode {
+                        id: "src/Types.hs->TYPE_CLASS->Monad".to_string(),
+                        node_type: "TYPE_CLASS".to_string(),
+                        name: "Monad".to_string(),
+                        file: "src/Types.hs".to_string(),
+                        line: 1,
+                        column: 0,
+                        end_line: 0,
+                        end_column: 0,
+                        exported: true,
+                        metadata: HashMap::new(),
+                    },
+                    GraphNode {
+                        id: "src/Types.hs->DATA_TYPE->Maybe".to_string(),
+                        node_type: "DATA_TYPE".to_string(),
+                        name: "Maybe".to_string(),
+                        file: "src/Types.hs".to_string(),
+                        line: 5,
+                        column: 0,
+                        end_line: 0,
+                        end_column: 0,
+                        exported: true,
+                        metadata: HashMap::new(),
+                    },
+                    GraphNode {
+                        id: "src/Types.hs->CONSTRUCTOR->Just".to_string(),
+                        node_type: "CONSTRUCTOR".to_string(),
+                        name: "Just".to_string(),
+                        file: "src/Types.hs".to_string(),
+                        line: 5,
+                        column: 20,
+                        end_line: 0,
+                        end_column: 0,
+                        exported: true,
+                        metadata: HashMap::new(),
+                    },
+                    GraphNode {
+                        id: "src/Types.hs->INSTANCE->Monad_Maybe".to_string(),
+                        node_type: "INSTANCE".to_string(),
+                        name: "Monad Maybe".to_string(),
+                        file: "src/Types.hs".to_string(),
+                        line: 10,
+                        column: 0,
+                        end_line: 0,
+                        end_column: 0,
+                        exported: false,
+                        metadata: HashMap::new(),
+                    },
+                    GraphNode {
+                        id: "src/Types.hs->TYPE_SYNONYM->String".to_string(),
+                        node_type: "TYPE_SYNONYM".to_string(),
+                        name: "String".to_string(),
+                        file: "src/Types.hs".to_string(),
+                        line: 15,
+                        column: 0,
+                        end_line: 0,
+                        end_column: 0,
+                        exported: true,
+                        metadata: HashMap::new(),
+                    },
+                    GraphNode {
+                        id: "src/Types.hs->TYPE_FAMILY->Element".to_string(),
+                        node_type: "TYPE_FAMILY".to_string(),
+                        name: "Element".to_string(),
+                        file: "src/Types.hs".to_string(),
+                        line: 20,
+                        column: 0,
+                        end_line: 0,
+                        end_column: 0,
+                        exported: true,
+                        metadata: HashMap::new(),
+                    },
+                    GraphNode {
+                        id: "src/Types.hs->EXPRESSION->expr1".to_string(),
+                        node_type: "EXPRESSION".to_string(),
+                        name: "expr1".to_string(),
+                        file: "src/Types.hs".to_string(),
+                        line: 25,
+                        column: 0,
+                        end_line: 0,
+                        end_column: 0,
+                        exported: false,
+                        metadata: HashMap::new(),
+                    },
+                ],
+                edges: vec![],
+                exports: vec![],
+            }),
+            errors: vec![],
+        }];
+
+        let nodes = collect_resolve_nodes(&results);
+        // Should include all 6 Haskell types, skip EXPRESSION
+        assert_eq!(nodes.len(), 6);
+        let types: Vec<&str> = nodes
+            .iter()
+            .map(|n| n["type"].as_str().unwrap())
+            .collect();
+        assert!(types.contains(&"TYPE_CLASS"));
+        assert!(types.contains(&"DATA_TYPE"));
+        assert!(types.contains(&"CONSTRUCTOR"));
+        assert!(types.contains(&"INSTANCE"));
+        assert!(types.contains(&"TYPE_SYNONYM"));
+        assert!(types.contains(&"TYPE_FAMILY"));
+        assert!(!types.contains(&"EXPRESSION"));
+    }
+
+    #[test]
     fn graph_node_serializes_with_type_field() {
         let node = GraphNode {
             id: "test.js->FUNCTION->foo".to_string(),
@@ -875,6 +1730,8 @@ mod tests {
             file: "test.js".to_string(),
             line: 1,
             column: 0,
+            end_line: 10,
+            end_column: 1,
             exported: false,
             metadata: HashMap::new(),
         };
