@@ -945,8 +945,13 @@ impl<'a> Evaluator<'a> {
         let mut results = vec![];
 
         for rule in rules {
-            // Evaluate rule body and collect bindings
-            let body_results = match self.eval_rule_body(rule) {
+            // Push down bound args from query into rule body.
+            // Maps query constants through head variables into initial bindings,
+            // so body predicates see bound values instead of unbound variables.
+            // e.g. query has_edge("12345") + head has_edge(X) → X="12345"
+            let initial = self.bind_from_query(rule, atom);
+
+            let body_results = match self.eval_rule_body_with(rule, initial) {
                 Ok(b) => b,
                 Err(e) => {
                     eprintln!("datalog eval_derived: reorder error for rule {:?}: {}", rule, e);
@@ -965,12 +970,31 @@ impl<'a> Evaluator<'a> {
         results
     }
 
-    /// Evaluate rule body and return all satisfying bindings
+    /// Map bound arguments from the query atom into rule head variables.
+    ///
+    /// For each position where query has a Const and head has a Var,
+    /// binds the head variable to the query constant value.
+    fn bind_from_query(&self, rule: &Rule, query: &Atom) -> Bindings {
+        let head = rule.head();
+        let mut bindings = Bindings::new();
+
+        for (i, head_term) in head.args().iter().enumerate() {
+            if let Term::Var(var) = head_term {
+                if let Some(Term::Const(value)) = query.args().get(i) {
+                    bindings.set(var, Value::from_term_const(value));
+                }
+            }
+        }
+
+        bindings
+    }
+
+    /// Evaluate rule body with initial bindings and return all satisfying bindings.
     ///
     /// Reorders body literals before evaluation to ensure correct variable binding order.
-    fn eval_rule_body(&self, rule: &Rule) -> Result<Vec<Bindings>, String> {
+    fn eval_rule_body_with(&self, rule: &Rule, initial: Bindings) -> Result<Vec<Bindings>, String> {
         let ordered = reorder_literals(rule.body())?;
-        let mut current = vec![Bindings::new()];
+        let mut current = vec![initial];
 
         for literal in &ordered {
             let mut next = vec![];
