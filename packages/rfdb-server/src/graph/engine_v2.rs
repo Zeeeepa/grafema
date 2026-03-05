@@ -472,12 +472,7 @@ impl GraphStore for GraphEngineV2 {
                 }
             }
             None => {
-                let nodes = self.store.find_nodes(None, None);
-                for n in nodes {
-                    if !self.is_node_tombstoned(n.id) {
-                        *counts.entry(n.node_type).or_insert(0) += 1;
-                    }
-                }
+                return self.store.count_by_type();
             }
         }
 

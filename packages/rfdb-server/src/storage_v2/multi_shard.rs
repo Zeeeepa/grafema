@@ -530,6 +530,25 @@ impl MultiShardStore {
     }
 }
 
+// ── Type Counts ───────────────────────────────────────────────────
+
+impl MultiShardStore {
+    /// Count nodes by type across all shards without loading full records.
+    ///
+    /// Fan-out to all shards and merge counts.
+    /// Since nodes are unique per shard (no cross-shard duplicates),
+    /// simple addition is correct.
+    pub fn count_by_type(&self) -> HashMap<String, usize> {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for shard in &self.shards {
+            for (node_type, count) in shard.count_by_type() {
+                *counts.entry(node_type).or_insert(0) += count;
+            }
+        }
+        counts
+    }
+}
+
 // ── Attribute Search ───────────────────────────────────────────────
 
 impl MultiShardStore {

@@ -12,7 +12,7 @@
 //! concern (T3.x). Shard receives segment descriptors and returns flush
 //! results; the caller updates the manifest.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Cursor};
 use std::path::{Path, PathBuf};
@@ -1719,6 +1719,59 @@ impl Shard {
         }
 
         ids
+    }
+
+    /// Count nodes by type without loading full records.
+    ///
+    /// Uses write buffer type iteration + L0 segment columnar scan +
+    /// L1 segment columnar scan for type counts.
+    /// Deduplicates by node ID (write buffer wins, newest segment wins).
+    /// Skips tombstoned nodes.
+    pub fn count_by_type(&self) -> HashMap<String, usize> {
+        let mut seen_ids: HashSet<u128> = HashSet::new();
+        let mut counts: HashMap<String, usize> = HashMap::new();
+
+        // Step 1: Write buffer (authoritative)
+        for node in self.write_buffer.iter_nodes() {
+            seen_ids.insert(node.id);
+            if self.tombstones.contains_node(node.id) {
+                continue;
+            }
+            *counts.entry(node.node_type.clone()).or_insert(0) += 1;
+        }
+
+        // Step 2: L0 segments (newest-to-oldest)
+        for i in (0..self.node_segments.len()).rev() {
+            let seg = &self.node_segments[i];
+            for j in 0..seg.record_count() {
+                let id = seg.get_id(j);
+                if seen_ids.contains(&id) {
+                    continue;
+                }
+                seen_ids.insert(id);
+                if self.tombstones.contains_node(id) {
+                    continue;
+                }
+                *counts.entry(seg.get_node_type(j).to_string()).or_insert(0) += 1;
+            }
+        }
+
+        // Step 3: L1 segment
+        if let Some(l1_seg) = &self.l1_node_segment {
+            for j in 0..l1_seg.record_count() {
+                let id = l1_seg.get_id(j);
+                if seen_ids.contains(&id) {
+                    continue;
+                }
+                seen_ids.insert(id);
+                if self.tombstones.contains_node(id) {
+                    continue;
+                }
+                *counts.entry(l1_seg.get_node_type(j).to_string()).or_insert(0) += 1;
+            }
+        }
+
+        counts
     }
 }
 
