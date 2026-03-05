@@ -23,7 +23,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 
 // Import will fail initially (TDD - implementation doesn't exist yet)
-import { FileExplainer, type FileExplainResult, type EnhancedNode } from '@grafema/core';
+import { FileExplainer, type FileExplainResult, type EnhancedNode } from '@grafema/util';
 import type { GraphBackend, NodeFilter, NodeRecord, EdgeRecord, EdgeType } from '@grafema/types';
 
 // =============================================================================

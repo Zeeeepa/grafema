@@ -18,7 +18,7 @@ import assert from 'node:assert';
 
 // Note: This import will fail until IssueNode is implemented.
 // That's expected TDD behavior - tests first, implementation second.
-import { IssueNode } from '@grafema/core';
+import { IssueNode } from '@grafema/util';
 
 // =============================================================================
 // 1. ID Generation Tests

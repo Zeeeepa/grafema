@@ -19,7 +19,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 
 // Import will fail initially (TDD - implementation doesn't exist yet)
-import { CoverageAnalyzer, type CoverageResult } from '@grafema/core';
+import { CoverageAnalyzer, type CoverageResult } from '@grafema/util';
 import type { GraphBackend, NodeRecord, NodeFilter, EdgeRecord, EdgeType } from '@grafema/types';
 
 // =============================================================================

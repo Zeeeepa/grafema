@@ -11,7 +11,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { TestBackend } from '../../helpers/TestRFDB.js';
-import { parseSemanticId } from '@grafema/core';
+import { parseSemanticId } from '@grafema/util';
 
 /**
  * Simulate findVariables scope filtering logic.

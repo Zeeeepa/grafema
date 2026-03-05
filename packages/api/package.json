@@ -36,7 +36,7 @@
     "directory": "packages/api"
   },
   "dependencies": {
-    "@grafema/core": "workspace:*",
+    "@grafema/util": "workspace:*",
     "@grafema/types": "workspace:*",
     "dataloader": "^2.2.3",
     "graphql": "^16.10.0",

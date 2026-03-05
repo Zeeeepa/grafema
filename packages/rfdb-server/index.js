@@ -11,8 +11,8 @@ const net = require('net');
 /**
  * Get the path to the rfdb-server binary for the current platform.
  * Only checks prebuilt directory. For full search (monorepo, PATH, env var, ~/.local/bin),
- * use findRfdbBinary() from @grafema/core instead.
- * @deprecated Use findRfdbBinary() from @grafema/core for full binary search.
+ * use findRfdbBinary() from @grafema/util instead.
+ * @deprecated Use findRfdbBinary() from @grafema/util for full binary search.
  * @returns {string|null} Path to binary, or null if not available
  */
 function getBinaryPath() {

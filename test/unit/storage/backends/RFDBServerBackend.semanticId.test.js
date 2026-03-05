@@ -23,7 +23,7 @@ import { join } from 'node:path';
 import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2 } from '@grafema/core';
+import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2 } from '@grafema/util';
 
 let testCounter = 0;
 

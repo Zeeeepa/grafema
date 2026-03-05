@@ -15,7 +15,7 @@ import { existsSync } from 'fs';
 import { execSync } from 'child_process';
 import React, { useState, useEffect } from 'react';
 import { render, Box, Text, useInput, useApp } from 'ink';
-import { RFDBServerBackend, findContainingFunction as findContainingFunctionCore, findCallsInFunction as findCallsInFunctionCore } from '@grafema/core';
+import { RFDBServerBackend, findContainingFunction as findContainingFunctionCore, findCallsInFunction as findCallsInFunctionCore } from '@grafema/util';
 import { getCodePreview, formatCodePreview } from '../utils/codePreview.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -816,7 +816,7 @@ async function getCallees(backend: RFDBServerBackend, nodeId: string, limit: num
   const seen = new Set<string>();
 
   try {
-    // Use shared utility from @grafema/core
+    // Use shared utility from @grafema/util
     const calls = await findCallsInFunctionCore(backend, nodeId);
 
     for (const call of calls) {

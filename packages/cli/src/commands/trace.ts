@@ -10,7 +10,7 @@
 import { Command } from 'commander';
 import { isAbsolute, resolve, join } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, traceValues, type ValueSource } from '@grafema/core';
+import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, traceValues, type ValueSource } from '@grafema/util';
 import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -596,7 +596,7 @@ async function extractProperty(
 
 /**
  * Trace a node to its literal values.
- * Uses shared traceValues utility from @grafema/core (REG-244).
+ * Uses shared traceValues utility from @grafema/util (REG-244).
  *
  * @param backend - RFDBServerBackend for graph queries
  * @param nodeId - Starting node ID

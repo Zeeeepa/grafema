@@ -14,8 +14,8 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 
-import { DiagnosticCollector, DiagnosticReporter } from '@grafema/core';
-import type { Diagnostic } from '@grafema/core';
+import { DiagnosticCollector, DiagnosticReporter } from '@grafema/util';
+import type { Diagnostic } from '@grafema/util';
 import type { PluginPhase } from '@grafema/types';
 
 // =============================================================================

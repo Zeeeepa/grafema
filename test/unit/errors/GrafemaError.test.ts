@@ -25,7 +25,7 @@ import {
   PluginError,
   AnalysisError,
   type ErrorContext,
-} from '@grafema/core';
+} from '@grafema/util';
 
 // =============================================================================
 // TESTS: GrafemaError Base Class

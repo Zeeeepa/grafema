@@ -2,7 +2,7 @@
  * MCP Prompts handler logic.
  * Extracted for testability — server.ts is a thin wrapper.
  */
-import { getOnboardingInstruction } from '@grafema/core';
+import { getOnboardingInstruction } from '@grafema/util';
 
 export interface PromptDefinition {
   name: string;

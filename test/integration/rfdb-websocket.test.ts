@@ -708,7 +708,7 @@ describe('RFDB WebSocket Integration', { skip: !canRunTests() ? 'rfdb-server bin
       // ]);
       //
       // // Verify via Unix socket
-      // const { RFDBClient } = await import('@grafema/core');
+      // const { RFDBClient } = await import('@grafema/util');
       // const unixClient = new RFDBClient(TEST_SOCKET_PATH);
       // await unixClient.connect();
       // await unixClient.hello(2);

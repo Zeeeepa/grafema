@@ -13,7 +13,7 @@ import type {
   CheckGuaranteesArgs,
   DeleteGuaranteeArgs,
 } from '../types.js';
-import { isGuaranteeType } from '@grafema/core';
+import { isGuaranteeType } from '@grafema/util';
 
 // === GUARANTEE HANDLERS ===
 

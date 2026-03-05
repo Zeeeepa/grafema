@@ -21,8 +21,8 @@ import {
   getNodeDisplayName,
   formatEdgeMetadata,
   STRUCTURAL_EDGE_TYPES,
-} from '@grafema/core';
-import type { NodeContext, EdgeGroup } from '@grafema/core';
+} from '@grafema/util';
+import type { NodeContext, EdgeGroup } from '@grafema/util';
 import type { BaseNodeRecord } from '@grafema/types';
 import { getCodePreview, formatCodePreview } from '../utils/codePreview.js';
 import { formatLocation } from '../utils/formatNode.js';

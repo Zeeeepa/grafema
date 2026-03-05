@@ -2,7 +2,7 @@
  * MCP Documentation Handlers
  */
 
-import { getOnboardingInstruction } from '@grafema/core';
+import { getOnboardingInstruction } from '@grafema/util';
 import {
   textResult,
 } from '../utils.js';

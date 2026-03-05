@@ -3,7 +3,7 @@
  */
 
 import { getProjectPath } from '../state.js';
-import { validateServices, validatePatterns, validateWorkspace, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/core';
+import { validateServices, validatePatterns, validateWorkspace, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/util';
 import { existsSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'fs';
 import type { Dirent } from 'fs';
 import { join, basename } from 'path';

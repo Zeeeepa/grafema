@@ -9,7 +9,7 @@ import { spawn } from 'child_process';
 import { createInterface } from 'readline';
 import { fileURLToPath } from 'url';
 import { stringify as stringifyYAML } from 'yaml';
-import { DEFAULT_CONFIG, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/core';
+import { DEFAULT_CONFIG, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/util';
 import { installSkill } from './setup-skill.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));

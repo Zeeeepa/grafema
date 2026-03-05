@@ -17,7 +17,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 // These will be imported after implementation:
-// import { calculateContentHash, calculateFileHash, calculateFileHashAsync } from '@grafema/core';
+// import { calculateContentHash, calculateFileHash, calculateFileHashAsync } from '@grafema/util';
 
 // Temporary stubs for TDD - tests written before implementation
 let calculateContentHash;
@@ -42,7 +42,7 @@ function createTestDir() {
  */
 async function loadImplementation() {
   try {
-    const core = await import('@grafema/core');
+    const core = await import('@grafema/util');
     calculateContentHash = core.calculateContentHash;
     calculateFileHash = core.calculateFileHash;
     calculateFileHashAsync = core.calculateFileHashAsync;

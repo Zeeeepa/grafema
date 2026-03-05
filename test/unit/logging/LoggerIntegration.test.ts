@@ -17,8 +17,8 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert';
 
-import type { Logger, LogLevel } from '@grafema/core';
-import { createLogger } from '@grafema/core';
+import type { Logger, LogLevel } from '@grafema/util';
+import { createLogger } from '@grafema/util';
 
 // =============================================================================
 // Test Helpers
@@ -381,7 +381,7 @@ describe('LoggerIntegration', () => {
   describe('OrchestratorOptions.logger', () => {
     it('should accept logger option in OrchestratorOptions', async () => {
       // Import Orchestrator to check its options interface
-      const { Orchestrator, OrchestratorOptions } = await import('@grafema/core') as {
+      const { Orchestrator, OrchestratorOptions } = await import('@grafema/util') as {
         Orchestrator: new (options: {
           graph?: import('@grafema/types').GraphBackend;
           logger?: Logger;
@@ -583,7 +583,7 @@ describe('LoggerIntegration', () => {
       // When Orchestrator runs, it should use logger instead of console.log
       // This is a contract test - the actual integration test would verify log output
 
-      const { Orchestrator } = await import('@grafema/core');
+      const { Orchestrator } = await import('@grafema/util');
 
       // For now, just verify Orchestrator can be constructed with logger option
       // The implementation should accept this option

@@ -15,7 +15,7 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { findContainingFunction, type CallerInfo } from '@grafema/core';
+import { findContainingFunction, type CallerInfo } from '@grafema/util';
 
 // =============================================================================
 // MOCK BACKEND

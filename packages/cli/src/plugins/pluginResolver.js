@@ -1,8 +1,8 @@
 /**
  * ESM resolve hook for custom Grafema plugins.
  *
- * Allows plugins in .grafema/plugins/ to `import { Plugin } from '@grafema/core'`
- * without requiring @grafema/core in the target project's node_modules/.
+ * Allows plugins in .grafema/plugins/ to `import { Plugin } from '@grafema/util'`
+ * without requiring @grafema/util in the target project's node_modules/.
  *
  * The hook maps @grafema/* bare specifiers to the actual package URLs
  * within the CLI's dependency tree.
@@ -26,7 +26,7 @@ export function initialize(data) {
  * Resolve hook — intercepts bare specifier imports for @grafema/* packages
  * and redirects them to the CLI's bundled versions.
  *
- * Only exact package name matches are handled (e.g. '@grafema/core').
+ * Only exact package name matches are handled (e.g. '@grafema/util').
  * All other specifiers pass through to the default resolver.
  */
 export function resolve(specifier, context, next) {

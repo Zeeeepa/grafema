@@ -26,7 +26,7 @@ import assert from 'node:assert';
 import {
   GrafemaError,
   StrictModeError,
-} from '@grafema/core';
+} from '@grafema/util';
 
 // =============================================================================
 // TESTS: StrictModeError Class

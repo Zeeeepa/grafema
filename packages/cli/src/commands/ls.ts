@@ -14,7 +14,7 @@ import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync } from 'fs';
-import { RFDBServerBackend } from '@grafema/core';
+import { RFDBServerBackend } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 

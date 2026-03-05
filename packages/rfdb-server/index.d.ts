@@ -1,7 +1,7 @@
 /**
  * Get the path to the rfdb-server binary for the current platform.
- * Only checks prebuilt directory. For full search, use findRfdbBinary() from @grafema/core.
- * @deprecated Use findRfdbBinary() from @grafema/core for full binary search.
+ * Only checks prebuilt directory. For full search, use findRfdbBinary() from @grafema/util.
+ * @deprecated Use findRfdbBinary() from @grafema/util for full binary search.
  * @returns Path to binary, or null if not available
  */
 export function getBinaryPath(): string | null;

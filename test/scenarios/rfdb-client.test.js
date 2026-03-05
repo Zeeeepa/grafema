@@ -14,7 +14,7 @@ import { dirname } from 'path';
 import { tmpdir } from 'os';
 import { setTimeout as sleep } from 'timers/promises';
 
-import { RFDBClient } from '@grafema/core';
+import { RFDBClient } from '@grafema/util';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

@@ -5,7 +5,7 @@
  * The CLI cannot import @grafema/mcp (dependency direction). If the Datalog syntax changes,
  * both copies must be updated.
  */
-import { levenshtein } from '@grafema/core';
+import { levenshtein } from '@grafema/util';
 
 export function extractQueriedTypes(query: string): { nodeTypes: string[]; edgeTypes: string[] } {
   const nodeTypes: string[] = [];

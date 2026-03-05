@@ -7,7 +7,7 @@
 
 import DataLoader from 'dataloader';
 import type { BaseNodeRecord } from '@grafema/types';
-import type { RFDBServerBackend } from '@grafema/core';
+import type { RFDBServerBackend } from '@grafema/util';
 
 /**
  * Create a DataLoader for batching node lookups.

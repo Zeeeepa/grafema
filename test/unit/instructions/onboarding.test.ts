@@ -7,7 +7,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { getOnboardingInstruction } from '@grafema/core';
+import { getOnboardingInstruction } from '@grafema/util';
 
 describe('getOnboardingInstruction', () => {
   it('should return a non-empty string', () => {

@@ -24,8 +24,8 @@ import {
   PluginError,
   AnalysisError,
   DiagnosticCollector,
-} from '@grafema/core';
-import type { Diagnostic } from '@grafema/core';
+} from '@grafema/util';
+import type { Diagnostic } from '@grafema/util';
 
 import type { PluginResult, PluginPhase } from '@grafema/types';
 

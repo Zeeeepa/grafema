@@ -14,7 +14,7 @@ import { pathToFileURL } from 'node:url';
 import { register } from 'node:module';
 
 // Resolve @grafema/* URLs from the CLI's perspective (workspace packages)
-const coreUrl = import.meta.resolve('@grafema/core');
+const coreUrl = import.meta.resolve('@grafema/util');
 const typesUrl = import.meta.resolve('@grafema/types');
 
 describe('pluginResolver', () => {
@@ -25,15 +25,15 @@ describe('pluginResolver', () => {
       resolver = await import('../src/plugins/pluginResolver.js');
       resolver.initialize({
         grafemaPackages: {
-          '@grafema/core': coreUrl,
+          '@grafema/util': coreUrl,
           '@grafema/types': typesUrl,
         },
       });
     });
 
-    it('resolves @grafema/core to the provided URL', () => {
+    it('resolves @grafema/util to the provided URL', () => {
       const next = () => { throw new Error('should not call next'); };
-      const result = resolver.resolve('@grafema/core', {}, next);
+      const result = resolver.resolve('@grafema/util', {}, next);
       assert.deepStrictEqual(result, { url: coreUrl, shortCircuit: true });
     });
 
@@ -72,7 +72,7 @@ describe('pluginResolver', () => {
         {
           data: {
             grafemaPackages: {
-              '@grafema/core': coreUrl,
+              '@grafema/util': coreUrl,
               '@grafema/types': typesUrl,
             },
           },
@@ -80,16 +80,16 @@ describe('pluginResolver', () => {
       );
 
       // Create a temp directory OUTSIDE the monorepo
-      // so @grafema/core is NOT in any parent node_modules/
+      // so @grafema/util is NOT in any parent node_modules/
       tmpDir = join(tmpdir(), `grafema-plugin-test-${Date.now()}`);
       const pluginsDir = join(tmpDir, '.grafema', 'plugins');
       mkdirSync(pluginsDir, { recursive: true });
 
-      // Write a plugin that imports from @grafema/core
+      // Write a plugin that imports from @grafema/util
       writeFileSync(
         join(pluginsDir, 'TestPlugin.mjs'),
         `
-import { Plugin, createSuccessResult } from '@grafema/core';
+import { Plugin, createSuccessResult } from '@grafema/util';
 
 export default class TestPlugin extends Plugin {
   get metadata() {
@@ -114,7 +114,7 @@ export default class TestPlugin extends Plugin {
       }
     });
 
-    it('can dynamically import a plugin that uses @grafema/core', async () => {
+    it('can dynamically import a plugin that uses @grafema/util', async () => {
       const pluginPath = join(tmpDir, '.grafema', 'plugins', 'TestPlugin.mjs');
       const pluginUrl = pathToFileURL(pluginPath).href;
 
@@ -129,7 +129,7 @@ export default class TestPlugin extends Plugin {
       const pluginUrl = pathToFileURL(pluginPath).href;
 
       const mod = await import(pluginUrl);
-      const { Plugin } = await import('@grafema/core');
+      const { Plugin } = await import('@grafema/util');
 
       const instance = new mod.default();
       assert.ok(instance instanceof Plugin, 'instance should be instanceof Plugin');

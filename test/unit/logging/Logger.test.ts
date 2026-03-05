@@ -26,7 +26,7 @@ import {
   createLogger,
   type Logger,
   type LogLevel,
-} from '@grafema/core';
+} from '@grafema/util';
 
 // =============================================================================
 // Test Helpers

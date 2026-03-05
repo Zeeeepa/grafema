@@ -16,7 +16,7 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { findCallsInFunction, type CallInfo } from '@grafema/core';
+import { findCallsInFunction, type CallInfo } from '@grafema/util';
 
 // =============================================================================
 // MOCK BACKEND

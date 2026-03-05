@@ -25,7 +25,7 @@ import {
   aggregateValues,
   type TracedValue,
   type TraceValuesGraphBackend,
-} from '@grafema/core';
+} from '@grafema/util';
 
 // =============================================================================
 // MOCK BACKEND

@@ -1,9 +1,15 @@
 /**
  * MCP Analysis Orchestration
+ *
+ * Shells out to the `grafema-orchestrator` Rust binary instead of using
+ * the JS Orchestrator class. The binary handles file discovery, parsing,
+ * analysis, resolution, and RFDB ingestion.
  */
 
-import type { Plugin } from '@grafema/core';
-import { Orchestrator } from '@grafema/core';
+import { existsSync } from 'fs';
+import { join, delimiter, dirname } from 'path';
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 import {
   getOrCreateBackend,
   getProjectPath,
@@ -14,9 +20,144 @@ import {
   isAnalysisRunning,
   acquireAnalysisLock,
 } from './state.js';
-import { loadConfig, loadCustomPlugins, createPlugins } from './config.js';
+import { loadConfig } from './config.js';
 import { log } from './utils.js';
 import type { GraphBackend } from '@grafema/types';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+/**
+ * Find the grafema-orchestrator binary.
+ *
+ * Search order:
+ * 1. GRAFEMA_ORCHESTRATOR environment variable
+ * 2. Monorepo target/release (development)
+ * 3. Monorepo target/debug (development)
+ * 4. System PATH
+ * 5. ~/.local/bin
+ */
+function findOrchestratorBinary(): string | null {
+  // 1. Environment variable
+  const envBinary = process.env.GRAFEMA_ORCHESTRATOR;
+  if (envBinary && existsSync(envBinary)) {
+    return envBinary;
+  }
+
+  // 2-3. Monorepo development builds
+  const monorepoRoot = dirname(dirname(dirname(__dirname)));
+  for (const profile of ['release', 'debug']) {
+    const path = join(monorepoRoot, 'packages', 'grafema-orchestrator', 'target', profile, 'grafema-orchestrator');
+    if (existsSync(path)) return path;
+  }
+
+  // 4. System PATH
+  for (const dir of (process.env.PATH || '').split(delimiter)) {
+    if (!dir) continue;
+    const path = join(dir, 'grafema-orchestrator');
+    if (existsSync(path)) return path;
+  }
+
+  // 5. ~/.local/bin
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (home) {
+    const path = join(home, '.local', 'bin', 'grafema-orchestrator');
+    if (existsSync(path)) return path;
+  }
+
+  return null;
+}
+
+/**
+ * Resolve the config file path for grafema-orchestrator.
+ *
+ * The orchestrator expects a YAML config with `root`, `include`, `exclude` fields.
+ * Looks for:
+ * 1. grafema.config.yaml in project root
+ * 2. .grafema/config.yaml as fallback
+ */
+function findConfigPath(projectPath: string): string | null {
+  const candidates = [
+    join(projectPath, 'grafema.config.yaml'),
+    join(projectPath, '.grafema', 'config.yaml'),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+/**
+ * Resolve the RFDB socket path for the current project.
+ *
+ * Uses the same logic as state.ts getOrCreateBackend():
+ * config.analysis.parallel.socketPath > default derived from dbPath
+ */
+function resolveSocketPath(projectPath: string): string {
+  const config = loadConfig(projectPath);
+  const configSocket = (config as any).analysis?.parallel?.socketPath;
+  if (configSocket) return configSocket;
+
+  // Default: same as RFDBServerBackend derives from dbPath
+  return join(projectPath, '.grafema', 'rfdb.sock');
+}
+
+/**
+ * Spawn grafema-orchestrator and wait for it to complete.
+ *
+ * @returns Promise that resolves on success, rejects on failure
+ */
+function runOrchestrator(
+  binaryPath: string,
+  args: string[],
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    log(`[Grafema MCP] Spawning: ${binaryPath} ${args.join(' ')}`);
+
+    const child = spawn(binaryPath, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data: Buffer) => {
+      const text = data.toString();
+      stdout += text;
+      // Forward orchestrator output to MCP log
+      for (const line of text.split('\n').filter(Boolean)) {
+        log(`[orchestrator] ${line}`);
+      }
+    });
+
+    child.stderr.on('data', (data: Buffer) => {
+      const text = data.toString();
+      stderr += text;
+      for (const line of text.split('\n').filter(Boolean)) {
+        log(`[orchestrator] ${line}`);
+      }
+    });
+
+    child.on('error', (err: Error) => {
+      reject(new Error(`Failed to spawn grafema-orchestrator: ${err.message}`));
+    });
+
+    child.on('close', (code: number | null) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(
+          new Error(
+            `grafema-orchestrator exited with code ${code}\n` +
+              (stderr || stdout || '(no output)')
+          )
+        );
+      }
+    });
+  });
+}
 
 /**
  * Ensure project is analyzed, optionally filtering to a single service.
@@ -26,8 +167,8 @@ import type { GraphBackend } from '@grafema/types';
  * - Concurrent calls wait for the current analysis to complete
  * - force=true while analysis is running returns an error immediately
  *
- * @param serviceName - Optional service to analyze (null = all)
- * @param force - If true, clear DB and re-analyze even if already analyzed.
+ * @param serviceName - Optional service to analyze (null = all) — currently unused by the orchestrator
+ * @param force - If true, add --force flag to re-analyze all files.
  *                ERROR if another analysis is already running.
  * @throws Error if force=true and analysis is already running
  */
@@ -62,8 +203,6 @@ export async function ensureAnalyzed(
     }
 
     // Clear DB inside lock, BEFORE running analysis
-    // This is critical for worker coordination: MCP server clears DB here,
-    // worker does NOT call db.clear() (see analysis-worker.ts)
     if (force || !getIsAnalyzed()) {
       log('[Grafema MCP] Clearing database before analysis...');
       if (db.clear) {
@@ -76,45 +215,54 @@ export async function ensureAnalyzed(
       `[Grafema MCP] Analyzing project: ${projectPath}${serviceName ? ` (service: ${serviceName})` : ''}`
     );
 
-    const config = loadConfig(projectPath);
-    const { pluginMap: customPluginMap } = await loadCustomPlugins(projectPath);
-
-    // Create plugins from config
-    const plugins = createPlugins(config.plugins, customPluginMap);
-
-    log(`[Grafema MCP] Total plugins: ${plugins.length}`);
-
-    // Check for parallel analysis config
-    const parallelConfig = (config as any).analysis?.parallel;
-    log(`[Grafema MCP] Config analysis section: ${JSON.stringify((config as any).analysis)}`);
-
-    if (parallelConfig?.enabled) {
-      log(
-        `[Grafema MCP] Parallel analysis enabled: maxWorkers=${parallelConfig.maxWorkers || 'auto'}, socket=${parallelConfig.socketPath || '/tmp/rfdb.sock'}`
+    // Find the orchestrator binary
+    const binaryPath = findOrchestratorBinary();
+    if (!binaryPath) {
+      throw new Error(
+        'grafema-orchestrator binary not found.\n' +
+          'Options:\n' +
+          '1. Build from source: cd packages/grafema-orchestrator && cargo build --release\n' +
+          '2. Set environment variable: export GRAFEMA_ORCHESTRATOR=/path/to/grafema-orchestrator\n' +
+          '3. Install to PATH or ~/.local/bin\n'
       );
     }
+
+    // Find config file
+    const configPath = findConfigPath(projectPath);
+    if (!configPath) {
+      throw new Error(
+        `No config file found for grafema-orchestrator.\n` +
+          `Expected one of:\n` +
+          `  - ${join(projectPath, 'grafema.config.yaml')}\n` +
+          `  - ${join(projectPath, '.grafema', 'config.yaml')}\n`
+      );
+    }
+
+    // Resolve socket path
+    const socketPath = resolveSocketPath(projectPath);
 
     const analysisStatus = getAnalysisStatus();
     const startTime = Date.now();
 
-    const orchestrator = new Orchestrator({
-      graph: db,
-      plugins: plugins as Plugin[],
-      parallel: parallelConfig,
-      serviceFilter: serviceName,
-      onProgress: (progress: any) => {
-        log(`[Grafema MCP] ${progress.phase}: ${progress.message}`);
-
-        setAnalysisStatus({
-          phase: progress.phase,
-          message: progress.message,
-          servicesDiscovered: progress.servicesDiscovered || analysisStatus.servicesDiscovered,
-          servicesAnalyzed: progress.servicesAnalyzed || analysisStatus.servicesAnalyzed,
-        });
-      },
+    setAnalysisStatus({
+      phase: 'starting',
+      message: 'Spawning grafema-orchestrator...',
+      servicesDiscovered: analysisStatus.servicesDiscovered,
+      servicesAnalyzed: analysisStatus.servicesAnalyzed,
     });
 
-    await orchestrator.run(projectPath);
+    // Build args
+    const args = ['analyze', '--config', configPath, '--socket', socketPath];
+    if (force) {
+      args.push('--force');
+    }
+
+    log(`[Grafema MCP] Binary: ${binaryPath}`);
+    log(`[Grafema MCP] Config: ${configPath}`);
+    log(`[Grafema MCP] Socket: ${socketPath}`);
+
+    // Run the orchestrator
+    await runOrchestrator(binaryPath, args);
 
     // Flush if available
     if ('flush' in db && typeof db.flush === 'function') {
@@ -125,6 +273,8 @@ export async function ensureAnalyzed(
 
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
     setAnalysisStatus({
+      phase: 'complete',
+      message: `Analysis complete in ${totalTime}s`,
       timings: {
         ...analysisStatus.timings,
         total: parseFloat(totalTime),
@@ -141,47 +291,13 @@ export async function ensureAnalyzed(
 }
 
 /**
- * Discover services without running full analysis
+ * Discover services without running full analysis.
+ *
+ * Service discovery is now handled by grafema-orchestrator's file discovery.
+ * This returns an empty array — the orchestrator handles discovery internally.
  */
 export async function discoverServices(): Promise<unknown[]> {
-  const db = await getOrCreateBackend();
   const projectPath = getProjectPath();
-
-  log(`[Grafema MCP] Discovering services in: ${projectPath}`);
-
-  const config = loadConfig(projectPath);
-  const { pluginMap: customPluginMap } = await loadCustomPlugins(projectPath);
-
-  const availablePlugins: Record<string, () => unknown> = {
-    ...Object.fromEntries(
-      Object.entries(customPluginMap).map(([name, PluginClass]) => [
-        name,
-        () => new PluginClass(),
-      ])
-    ),
-  };
-
-  const plugins: unknown[] = [];
-  const discoveryPluginNames = config.plugins.discovery ?? [];
-
-  for (const name of discoveryPluginNames) {
-    const factory = availablePlugins[name];
-    if (factory) {
-      plugins.push(factory());
-      log(`[Grafema MCP] Enabled discovery plugin: ${name}`);
-    } else {
-      log(`[Grafema MCP] Warning: Unknown discovery plugin ${name}`);
-    }
-  }
-
-  const orchestrator = new Orchestrator({
-    graph: db,
-    plugins: plugins as Plugin[],
-  });
-
-  const manifest = await orchestrator.discover(projectPath);
-
-  log(`[Grafema MCP] Discovery complete: found ${manifest.services?.length || 0} services`);
-
-  return manifest.services || [];
+  log(`[Grafema MCP] Service discovery is handled by grafema-orchestrator. Project: ${projectPath}`);
+  return [];
 }

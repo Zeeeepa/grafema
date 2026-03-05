@@ -4,8 +4,8 @@
 
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
-import { RFDBServerBackend, GuaranteeManager, GuaranteeAPI } from '@grafema/core';
-import type { GuaranteeGraphBackend, GuaranteeGraph } from '@grafema/core';
+import { RFDBServerBackend, GuaranteeManager, GuaranteeAPI } from '@grafema/util';
+import type { GuaranteeGraphBackend, GuaranteeGraph } from '@grafema/util';
 import { loadConfig } from './config.js';
 import { log, initLogger } from './utils.js';
 import type { AnalysisStatus } from './types.js';

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { ResourceRegistryImpl } from '@grafema/core';
+import { ResourceRegistryImpl } from '@grafema/util';
 
 describe('ResourceRegistryImpl', () => {
   describe('getOrCreate', () => {

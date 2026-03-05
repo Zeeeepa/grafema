@@ -9,7 +9,7 @@ import {
   checkTypoAgainstKnownTypes,
   resetKnownNodeTypes,
   getKnownNodeTypes
-} from '@grafema/core';
+} from '@grafema/util';
 
 describe('Levenshtein Distance', () => {
   describe('basic cases', () => {

@@ -12,7 +12,7 @@ import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync, unlinkSync, readFileSync } from 'fs';
 import { setTimeout as sleep } from 'timers/promises';
-import { RFDBClient, loadConfig, RFDBServerBackend, findRfdbBinary, startRfdbServer } from '@grafema/core';
+import { RFDBClient, loadConfig, RFDBServerBackend, findRfdbBinary, startRfdbServer } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 // Extend config type for server settings

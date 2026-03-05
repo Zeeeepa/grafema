@@ -16,8 +16,8 @@ import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-import { DiagnosticCollector, DiagnosticWriter } from '@grafema/core';
-import type { Diagnostic } from '@grafema/core';
+import { DiagnosticCollector, DiagnosticWriter } from '@grafema/util';
+import type { Diagnostic } from '@grafema/util';
 import type { PluginPhase } from '@grafema/types';
 
 // =============================================================================

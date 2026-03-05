@@ -13,7 +13,7 @@
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
-import { GuaranteeAPI, type GuaranteeGraphBackend, GuaranteeNode } from '@grafema/core';
+import { GuaranteeAPI, type GuaranteeGraphBackend, GuaranteeNode } from '@grafema/util';
 
 describe('GuaranteeAPI', () => {
   let db: Awaited<ReturnType<typeof createTestDatabase>>;

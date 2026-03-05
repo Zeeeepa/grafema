@@ -9,7 +9,7 @@
 import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend } from '@grafema/core';
+import { RFDBServerBackend } from '@grafema/util';
 import { formatNodeDisplay } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';

@@ -22,7 +22,7 @@ import {
   DiagnosticCollector,
   ValidationError,
   GrafemaError,
-} from '@grafema/core';
+} from '@grafema/util';
 import { createSuccessResult } from '@grafema/types';
 import type { PluginResult } from '@grafema/types';
 

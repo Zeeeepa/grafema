@@ -13,7 +13,7 @@ import { Command } from 'commander';
 import { resolve, join, basename } from 'path';
 import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
+import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/util';
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
@@ -392,7 +392,7 @@ export function isFileScope(scope: string): boolean {
 /**
  * Check if a semantic ID matches the given scope constraints.
  *
- * Uses parseSemanticId from @grafema/core for robust ID parsing.
+ * Uses parseSemanticId from @grafema/util for robust ID parsing.
  *
  * Scope matching rules:
  * - File scope: semantic ID must match the file path (full or basename)
@@ -756,7 +756,7 @@ async function getCallers(
       const callNode = await backend.getNode(edge.src);
       if (!callNode) continue;
 
-      // Find the FUNCTION that contains this CALL (use shared utility from @grafema/core)
+      // Find the FUNCTION that contains this CALL (use shared utility from @grafema/util)
       const containingFunc = await findContainingFunctionCore(backend, callNode.id);
 
       if (containingFunc && !seen.has(containingFunc.id)) {
@@ -782,7 +782,7 @@ async function getCallers(
 /**
  * Get functions that this node calls
  *
- * Uses shared utility from @grafema/core which:
+ * Uses shared utility from @grafema/util which:
  * - Follows HAS_SCOPE -> SCOPE -> CONTAINS pattern correctly
  * - Finds both CALL and METHOD_CALL nodes
  * - Only returns resolved calls (those with CALLS edges to targets)

@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 
 // Config loading
-import { loadConfig } from '../../packages/core/dist/config/ConfigLoader.js';
+import { loadConfig } from '../../packages/util/dist/config/ConfigLoader.js';
 
 describe('Workspace Multi-Root Configuration', () => {
   const testDir = join(process.cwd(), 'test/fixtures/multi-root-test');

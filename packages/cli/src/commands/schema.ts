@@ -21,7 +21,7 @@ import {
   type GraphSchema,
   type NodeTypeSchema,
   type EdgeTypeSchema,
-} from '@grafema/core';
+} from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 interface ExportOptions {

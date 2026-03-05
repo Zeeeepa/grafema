@@ -17,7 +17,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
-import { loadConfig, DEFAULT_CONFIG, validateVersion, validateRouting, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/core';
+import { loadConfig, DEFAULT_CONFIG, validateVersion, validateRouting, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/util';
 
 // =============================================================================
 // Test Helpers

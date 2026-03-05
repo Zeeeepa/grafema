@@ -16,9 +16,9 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
-import { PathValidator } from '@grafema/core';
+import { PathValidator } from '@grafema/util';
 import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
-import { versionManager } from '@grafema/core';
+import { versionManager } from '@grafema/util';
 
 after(cleanupAllTestDatabases);
 

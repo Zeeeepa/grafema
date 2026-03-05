@@ -17,7 +17,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { encode, decode } = require('../../packages/rfdb/node_modules/@msgpack/msgpack');
 
-import { RFDBClient } from '@grafema/core';
+import { RFDBClient } from '@grafema/util';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

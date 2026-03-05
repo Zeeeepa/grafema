@@ -15,7 +15,21 @@
  * ```
  */
 
-import type { ProgressInfo } from '@grafema/core';
+/**
+ * Progress information from the analysis pipeline.
+ * Defined locally to avoid dependency on @grafema/util.
+ */
+export interface ProgressInfo {
+  phase: string;
+  currentPlugin?: string;
+  message?: string;
+  servicesDiscovered?: number;
+  servicesAnalyzed?: number;
+  totalServices?: number;
+  totalFiles?: number;
+  processedFiles?: number;
+  currentService?: string;
+}
 
 /**
  * Options for creating a ProgressRenderer instance.

@@ -13,7 +13,7 @@ import {
   getCategoryForCode,
   getCodesForCategory,
   type DiagnosticCategoryKey,
-} from '../../../../packages/core/src/diagnostics/categories.js';
+} from '../../../../packages/util/dist/diagnostics/index.js';
 
 describe('DIAGNOSTIC_CATEGORIES', () => {
   it('should define all expected categories', () => {

@@ -22,7 +22,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 // These will be imported after implementation:
-// import { resolveModulePath, isRelativeImport, resolveRelativeSpecifier } from '@grafema/core';
+// import { resolveModulePath, isRelativeImport, resolveRelativeSpecifier } from '@grafema/util';
 
 // Temporary stubs for TDD - tests written before implementation
 let resolveModulePath;
@@ -58,7 +58,7 @@ function createFile(relativePath, content = '') {
  */
 async function loadImplementation() {
   try {
-    const core = await import('@grafema/core');
+    const core = await import('@grafema/util');
     resolveModulePath = core.resolveModulePath;
     isRelativeImport = core.isRelativeImport;
     resolveRelativeSpecifier = core.resolveRelativeSpecifier;
@@ -132,7 +132,7 @@ describe('Module Resolution Utility (REG-320)', () => {
       }
 
       assert.strictEqual(isRelativeImport('@scope/pkg'), false);
-      assert.strictEqual(isRelativeImport('@grafema/core'), false);
+      assert.strictEqual(isRelativeImport('@grafema/util'), false);
       assert.strictEqual(isRelativeImport('@types/node'), false);
     });
 

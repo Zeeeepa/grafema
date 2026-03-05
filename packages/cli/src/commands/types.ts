@@ -11,7 +11,7 @@
 import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend } from '@grafema/core';
+import { RFDBServerBackend } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 interface TypesOptions {

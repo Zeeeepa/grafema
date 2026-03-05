@@ -1,56 +1,12 @@
 /**
  * MCP Server Configuration
+ *
+ * Loads grafema config via the shared loader from @grafema/util.
+ * Plugin instantiation is no longer needed — grafema-orchestrator handles analysis.
  */
 
-import { join } from 'path';
-import { existsSync, readdirSync } from 'fs';
-import { pathToFileURL } from 'url';
 import { log } from './utils.js';
-import { loadConfig as loadConfigFromCore, type GrafemaConfig } from '@grafema/core';
-
-// === PLUGIN IMPORTS ===
-import {
-  // Indexing
-  JSModuleIndexer,
-  RustModuleIndexer,
-  // Analysis
-  CoreV2Analyzer,
-  ExpressRouteAnalyzer,
-  ExpressResponseAnalyzer,
-  NestJSRouteAnalyzer,
-  SocketIOAnalyzer,
-  DatabaseAnalyzer,
-  FetchAnalyzer,
-  SocketAnalyzer,
-  ServiceLayerAnalyzer,
-  ReactAnalyzer,
-  RustAnalyzer,
-  // Enrichment
-  ValueDomainAnalyzer,
-  MountPointResolver,
-  ExpressHandlerLinker,
-  PrefixEvaluator,
-  ExportEntityLinker,
-  HTTPConnectionEnricher,
-  CallbackCallResolver,
-  SocketConnectionEnricher,
-  ConfigRoutingMapBuilder,
-  ServiceConnectionEnricher,
-  RustFFIEnricher,
-  RejectionPropagationEnricher,
-  RedisEnricher,
-  NodejsBuiltinsResolver,
-  // Validation
-  CallResolverValidator,
-  EvalBanValidator,
-  SQLInjectionValidator,
-  AwaitInLoopValidator,
-  ShadowingDetector,
-  GraphConnectivityValidator,
-  DataFlowValidator,
-  BrokenImportValidator,
-  UnconnectedRouteValidator,
-} from '@grafema/core';
+import { loadConfig as loadConfigFromUtil, type GrafemaConfig } from '@grafema/util';
 
 // === MCP-SPECIFIC CONFIG ===
 /**
@@ -75,63 +31,14 @@ const MCP_DEFAULTS: Pick<MCPConfig, 'discovery'> = {
   },
 };
 
-// === BUILTIN PLUGINS ===
-type PluginFactory = () => unknown;
-
-export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
-  // Indexing
-  JSModuleIndexer: () => new JSModuleIndexer(),
-  RustModuleIndexer: () => new RustModuleIndexer(),
-
-  // Analysis
-  CoreV2Analyzer: () => new CoreV2Analyzer(),
-  ExpressRouteAnalyzer: () => new ExpressRouteAnalyzer(),
-  ExpressResponseAnalyzer: () => new ExpressResponseAnalyzer(),
-  NestJSRouteAnalyzer: () => new NestJSRouteAnalyzer(),
-  SocketIOAnalyzer: () => new SocketIOAnalyzer(),
-  DatabaseAnalyzer: () => new DatabaseAnalyzer(),
-  FetchAnalyzer: () => new FetchAnalyzer(),
-  SocketAnalyzer: () => new SocketAnalyzer(),
-  ServiceLayerAnalyzer: () => new ServiceLayerAnalyzer(),
-  ReactAnalyzer: () => new ReactAnalyzer(),
-  RustAnalyzer: () => new RustAnalyzer(),
-
-  // Enrichment
-  ValueDomainAnalyzer: () => new ValueDomainAnalyzer(),
-  MountPointResolver: () => new MountPointResolver(),
-  ExpressHandlerLinker: () => new ExpressHandlerLinker(),
-  PrefixEvaluator: () => new PrefixEvaluator(),
-  ExportEntityLinker: () => new ExportEntityLinker(),
-  HTTPConnectionEnricher: () => new HTTPConnectionEnricher(),
-  CallbackCallResolver: () => new CallbackCallResolver(),
-  SocketConnectionEnricher: () => new SocketConnectionEnricher(),
-  ConfigRoutingMapBuilder: () => new ConfigRoutingMapBuilder(),
-  ServiceConnectionEnricher: () => new ServiceConnectionEnricher(),
-  RustFFIEnricher: () => new RustFFIEnricher(),
-  RejectionPropagationEnricher: () => new RejectionPropagationEnricher(),
-  RedisEnricher: () => new RedisEnricher(),
-  NodejsBuiltinsResolver: () => new NodejsBuiltinsResolver(),
-
-  // Validation
-  CallResolverValidator: () => new CallResolverValidator(),
-  EvalBanValidator: () => new EvalBanValidator(),
-  SQLInjectionValidator: () => new SQLInjectionValidator(),
-  AwaitInLoopValidator: () => new AwaitInLoopValidator(),
-  ShadowingDetector: () => new ShadowingDetector(),
-  GraphConnectivityValidator: () => new GraphConnectivityValidator(),
-  DataFlowValidator: () => new DataFlowValidator(),
-  BrokenImportValidator: () => new BrokenImportValidator(),
-  UnconnectedRouteValidator: () => new UnconnectedRouteValidator(),
-};
-
 // === CONFIG LOADING ===
 /**
  * Load MCP configuration (extends base GrafemaConfig).
- * Uses shared ConfigLoader but adds MCP-specific defaults.
+ * Uses shared loader but adds MCP-specific defaults.
  */
 export function loadConfig(projectPath: string): MCPConfig {
   // Use shared loader (handles YAML/JSON, deprecation warnings)
-  const baseConfig = loadConfigFromCore(projectPath, {
+  const baseConfig = loadConfigFromUtil(projectPath, {
     warn: (msg) => log(`[Grafema MCP] ${msg}`),
   });
 
@@ -140,90 +47,4 @@ export function loadConfig(projectPath: string): MCPConfig {
     ...baseConfig,
     ...MCP_DEFAULTS,
   };
-}
-
-// === CUSTOM PLUGINS ===
-export interface CustomPluginResult {
-  plugins: unknown[];
-  pluginMap: Record<string, new () => unknown>;
-}
-
-export async function loadCustomPlugins(projectPath: string): Promise<CustomPluginResult> {
-  const pluginsDir = join(projectPath, '.grafema', 'plugins');
-  if (!existsSync(pluginsDir)) {
-    return { plugins: [], pluginMap: {} };
-  }
-
-  const customPlugins: unknown[] = [];
-  const pluginMap: Record<string, new () => unknown> = {};
-
-  try {
-    const files = readdirSync(pluginsDir).filter(
-      (f) => f.endsWith('.js') || f.endsWith('.mjs')
-    );
-
-    for (const file of files) {
-      try {
-        const pluginPath = join(pluginsDir, file);
-        const pluginUrl = pathToFileURL(pluginPath).href;
-        const module = await import(pluginUrl);
-
-        const PluginClass = module.default || module[file.replace(/\.(m?js)$/, '')];
-        if (PluginClass && typeof PluginClass === 'function') {
-          const pluginName = PluginClass.name || file.replace(/\.(m?js)$/, '');
-          const instance = new PluginClass();
-          if (instance.config) {
-            instance.config.sourceFile = pluginPath;
-          }
-          customPlugins.push(instance);
-          pluginMap[pluginName] = PluginClass;
-          log(`[Grafema MCP] Loaded custom plugin: ${pluginName} from ${file}`);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        log(`[Grafema MCP] Failed to load plugin ${file}: ${message}`);
-      }
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(`[Grafema MCP] Error loading custom plugins: ${message}`);
-  }
-
-  return { plugins: customPlugins, pluginMap };
-}
-
-// === PLUGIN INSTANTIATION ===
-export function createPlugins(
-  config: GrafemaConfig['plugins'],
-  customPluginMap: Record<string, new () => unknown> = {}
-): unknown[] {
-  const pluginNames = [
-    ...config.indexing,
-    ...config.analysis,
-    ...config.enrichment,
-    ...config.validation,
-  ];
-
-  const plugins: unknown[] = [];
-  const availablePlugins: Record<string, PluginFactory> = {
-    ...BUILTIN_PLUGINS,
-    ...Object.fromEntries(
-      Object.entries(customPluginMap).map(([name, PluginClass]) => [
-        name,
-        () => new PluginClass(),
-      ])
-    ),
-  };
-
-  for (const name of pluginNames) {
-    const factory = availablePlugins[name];
-    if (factory) {
-      plugins.push(factory());
-      log(`[Grafema MCP] Enabled plugin: ${name}`);
-    } else {
-      log(`[Grafema MCP] Plugin not found: ${name} (skipping)`);
-    }
-  }
-
-  return plugins;
 }

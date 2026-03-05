@@ -6,7 +6,7 @@
  *   "error in catch in fetchData" - find error in catch block inside fetchData
  *   "token in src/auth.ts" - find token in specific file
  *
- * Uses parseSemanticId() from @grafema/core for robust ID parsing.
+ * Uses parseSemanticId() from @grafema/util for robust ID parsing.
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';

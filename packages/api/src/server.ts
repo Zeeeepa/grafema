@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 import { resolvers } from './resolvers/index.js';
 import { createContext } from './context.js';
-import type { RFDBServerBackend } from '@grafema/core';
+import type { RFDBServerBackend } from '@grafema/util';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

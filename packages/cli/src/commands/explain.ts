@@ -16,7 +16,7 @@ import { Command } from 'commander';
 import { resolve, join, relative, normalize } from 'path';
 import { existsSync, realpathSync } from 'fs';
 import { toRelativeDisplay } from '../utils/pathUtils.js';
-import { RFDBServerBackend, FileExplainer, type EnhancedNode } from '@grafema/core';
+import { RFDBServerBackend, FileExplainer, type EnhancedNode } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 interface ExplainOptions {

@@ -25,7 +25,7 @@ import { join } from 'node:path';
 import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { RFDBServerBackend } from '@grafema/core';
+import { RFDBServerBackend } from '@grafema/util';
 
 let testCounter = 0;
 

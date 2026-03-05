@@ -10,7 +10,7 @@ import assert from 'node:assert';
 import { writeFileSync, mkdirSync, chmodSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { findRfdbBinary } from '@grafema/core';
+import { findRfdbBinary } from '@grafema/util';
 
 describe('findRfdbBinary', () => {
   let tempDir;

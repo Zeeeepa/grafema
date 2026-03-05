@@ -5,7 +5,7 @@
  */
 
 import type { IncomingMessage } from 'node:http';
-import type { RFDBServerBackend } from '@grafema/core';
+import type { RFDBServerBackend } from '@grafema/util';
 import { createDataLoaders, type DataLoaders } from './dataloaders/index.js';
 
 export interface GraphQLContext {

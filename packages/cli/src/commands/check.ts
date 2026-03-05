@@ -15,8 +15,8 @@ import {
   GraphFreshnessChecker,
   IncrementalReanalyzer,
   DIAGNOSTIC_CATEGORIES,
-} from '@grafema/core';
-import type { GuaranteeGraph, DiagnosticCategoryKey } from '@grafema/core';
+} from '@grafema/util';
+import type { GuaranteeGraph, DiagnosticCategoryKey } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 
@@ -31,7 +31,7 @@ const BUILT_IN_VALIDATORS: Record<string, { name: string; description: string; c
   // }
 };
 
-// Re-export for backward compatibility (deprecated - import from @grafema/core instead)
+// Re-export for backward compatibility (deprecated - import from @grafema/util instead)
 export { DIAGNOSTIC_CATEGORIES as CHECK_CATEGORIES };
 
 export const checkCommand = new Command('check')

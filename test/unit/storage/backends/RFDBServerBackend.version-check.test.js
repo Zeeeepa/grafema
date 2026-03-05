@@ -17,7 +17,7 @@ import { mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 
-import { RFDBServerBackend, getSchemaVersion, GRAFEMA_VERSION } from '@grafema/core';
+import { RFDBServerBackend, getSchemaVersion, GRAFEMA_VERSION } from '@grafema/util';
 
 let testCounter = 0;
 
@@ -123,7 +123,7 @@ describe('RFDBServerBackend version check on connect (RFD-42)', () => {
       await backend.connect();
 
       // The server binary reports its Cargo.toml version (currently 0.1.0).
-      // The client reads GRAFEMA_VERSION from @grafema/core/package.json (currently 0.2.11).
+      // The client reads GRAFEMA_VERSION from @grafema/util/package.json (currently 0.2.11).
       // These differ, so _negotiateProtocol() should log a version mismatch warning.
 
       const clientSchema = getSchemaVersion(GRAFEMA_VERSION);

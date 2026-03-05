@@ -14,7 +14,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 // Will fail to import until implementation exists (TDD)
-import { InterfaceSchemaExtractor, type InterfaceSchema } from '@grafema/core';
+import { InterfaceSchemaExtractor, type InterfaceSchema } from '@grafema/util';
 
 // ============================================================================
 // MockBackend - Implements queryNodes interface for testing

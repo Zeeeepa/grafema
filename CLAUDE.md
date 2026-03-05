@@ -21,7 +21,9 @@ Grafema is NOT competing with TypeScript or static type checkers. It's for codeb
 ## Architecture
 
 - **Plugin-based, modular architecture**
-- Modules: `types`, `core`, `cli`, `mcp`, `gui`
+- Modules: `types`, `util`, `cli`, `mcp`, `gui`
+- `packages/util/` (`@grafema/util`) — query layer, config, diagnostics, guarantees, RFDB lifecycle
+- `packages/grafema-orchestrator/` — Rust analysis binary (replaces old JS analysis pipeline)
 - RFDB server (`packages/rfdb-server/`) — Rust graph database, client-server architecture via unix-socket
 
 ## Core Principles
@@ -209,11 +211,13 @@ Project-specific skills in `.claude/skills/`. Key skills:
 ### Other Skills
 See `.claude/skills/` for debugging skills: `grafema-cli-dev-workflow`, `grafema-cross-file-operations`, `pnpm-workspace-publish`
 
-## Dogfooding: Graph-First Exploration
+## Dogfooding: Graph-First Exploration (MANDATORY)
 
-**CRITICAL: When exploring the codebase, use Grafema MCP tools FIRST, not Glob/Grep/Read.**
+**HARD RULE: Every exploration task MUST start with Grafema MCP queries. Using Glob/Grep/Read without first trying the graph is a violation.**
 
-Do NOT delegate exploration to Explore subagents — they don't know about Grafema MCP tools. Instead, query the graph yourself from the main context:
+Do NOT delegate exploration to Explore subagents — they don't know about Grafema MCP tools. Query the graph yourself from the main context.
+
+MCP tools are deferred — load them via `ToolSearch` before first use (e.g., `ToolSearch("+grafema find")`).
 
 | Instead of... | Use Grafema MCP |
 |---------------|-----------------|
@@ -222,9 +226,45 @@ Do NOT delegate exploration to Explore subagents — they don't know about Grafe
 | Read file to understand deps | `mcp__grafema__trace_dataflow` or `mcp__grafema__get_file_overview` |
 | Read file to understand structure | `mcp__grafema__get_file_overview` or `mcp__grafema__get_function_details` |
 | Multiple Reads to understand impact | `mcp__grafema__query_graph` with Datalog |
+| Find cross-package imports | `query_graph` with `attr(X, "source", "@grafema/core")` |
 
-MCP tools are deferred — load them via `ToolSearch` before first use (e.g., `ToolSearch("+grafema find")`).
+**Fallback to file reads ONLY when:**
+1. Graph returned 0 results AND you verified the query was correct
+2. You need exact source code for implementation (not exploration)
+3. `get_stats` shows nodeCount=0 (graph not loaded)
 
-If the graph doesn't have the answer — fallback to file reads. **Note the gap** for future improvement.
+### Gap Discovery Protocol (MANDATORY)
+
+**When Grafema can't answer a question that it SHOULD be able to answer — STOP.**
+
+This is not a minor note. A gap means the product is failing its core thesis. Protocol:
+
+1. **STOP** the current task immediately
+2. **Describe the gap**: what query you tried, what you expected, what happened
+3. **Assess**: is this fixable now (config issue, missing analysis) or a product limitation?
+4. **If fixable now** — fix it, verify, then resume the original task
+5. **If product limitation** — record in `_ai/gaps.md` with date, description, and workaround used
+6. **Record interrupted task** in `_ai/interrupted-tasks.md` so you can return to it later
+7. **Discuss with user** before proceeding — the gap may change the task priority
+
+**Gap file format** (`_ai/gaps.md`):
+```markdown
+## YYYY-MM-DD: Short description
+- **Query attempted**: what MCP call was made
+- **Expected**: what should have been returned
+- **Actual**: what happened
+- **Workaround**: how you worked around it
+- **Severity**: critical / important / minor
+- **Linear issue**: REG-XXX (if created)
+```
+
+**Interrupted task file format** (`_ai/interrupted-tasks.md`):
+```markdown
+## YYYY-MM-DD: Task description
+- **Context**: what was being done
+- **Blocked by**: gap description or REG-XXX
+- **Resume point**: where to pick up
+- **Status**: blocked / resumed / completed
+```
 
 Full dogfooding guide: `_ai/dogfooding.md`

@@ -11,7 +11,7 @@
  */
 
 import { RFDBClient } from '../../packages/rfdb/dist/client.js';
-import { RFDBServerBackend } from '@grafema/core';
+import { RFDBServerBackend } from '@grafema/util';
 import { join, dirname } from 'node:path';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';

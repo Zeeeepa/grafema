@@ -14,8 +14,8 @@
 import { Command } from 'commander';
 import { resolve, join, relative, normalize } from 'path';
 import { existsSync, realpathSync } from 'fs';
-import { RFDBServerBackend, FileOverview } from '@grafema/core';
-import type { FileOverviewResult, FunctionOverview } from '@grafema/core';
+import { RFDBServerBackend, FileOverview } from '@grafema/util';
+import type { FileOverviewResult, FunctionOverview } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 

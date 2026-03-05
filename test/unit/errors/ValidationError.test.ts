@@ -23,7 +23,7 @@ import {
   GrafemaError,
   ValidationError,
   type ErrorContext,
-} from '@grafema/core';
+} from '@grafema/util';
 
 // =============================================================================
 // TESTS: ValidationError Class

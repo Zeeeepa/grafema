@@ -14,7 +14,7 @@ import { tmpdir } from 'os';
 import { EventEmitter } from 'events';
 
 // Import from dist (tests run against built output)
-import { startRfdbServer } from '../../packages/core/dist/utils/startRfdbServer.js';
+import { startRfdbServer } from '../../packages/util/dist/utils/startRfdbServer.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -449,7 +449,7 @@ describe('startRfdbServer', () => {
 // Eagerly try to import checkExistingServer; set to null if not available yet
 let _checkExistingServer = null;
 try {
-  const _mod = await import('../../packages/core/dist/utils/startRfdbServer.js');
+  const _mod = await import('../../packages/util/dist/utils/startRfdbServer.js');
   _checkExistingServer = _mod.checkExistingServer ?? null;
 } catch {
   // Module not built yet or export missing — tests will be skipped below

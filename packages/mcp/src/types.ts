@@ -36,7 +36,7 @@ export interface PaginationParams {
 }
 
 // === CONFIG ===
-export type { GrafemaConfig } from '@grafema/core';
+export type { GrafemaConfig } from '@grafema/util';
 export type { MCPConfig } from './config.js';
 
 // === TOOL ARGUMENTS ===
@@ -267,7 +267,7 @@ export interface GetFunctionDetailsArgs {
 }
 
 // Re-export types from core for convenience
-export type { CallInfo, CallerInfo, FindCallsOptions } from '@grafema/core';
+export type { CallInfo, CallerInfo, FindCallsOptions } from '@grafema/util';
 
 /**
  * Datalog query result binding

@@ -4,8 +4,8 @@
 
 import { ensureAnalyzed } from '../analysis.js';
 import { getProjectPath } from '../state.js';
-import { findCallsInFunction, findContainingFunction, FileOverview, buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES } from '@grafema/core';
-import type { CallInfo, CallerInfo, NodeContext } from '@grafema/core';
+import { findCallsInFunction, findContainingFunction, FileOverview, buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES } from '@grafema/util';
+import type { CallInfo, CallerInfo, NodeContext } from '@grafema/util';
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { isAbsolute, join, relative } from 'path';
 import {

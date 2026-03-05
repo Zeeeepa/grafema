@@ -1,24 +1,24 @@
 /**
- * Analyze command action — connects to RFDB, loads plugins, runs Orchestrator.
+ * Analyze command action — spawns grafema-orchestrator for project analysis.
  *
- * Extracted from analyze.ts (REG-435) to keep command definition separate
- * from execution logic.
+ * The Rust grafema-orchestrator binary handles the full analysis pipeline:
+ * discovery, parsing (OXC), analysis (grafema-analyzer), resolution,
+ * and RFDB ingestion. This action finds the binary, spawns it with
+ * the correct args, streams output, and prints a summary.
  */
 
-import { resolve, join } from 'path';
+import { resolve, join, delimiter, dirname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 import {
-  Orchestrator,
   RFDBServerBackend,
-  DiagnosticReporter,
-  DiagnosticWriter,
   createLogger,
-  loadConfig,
-  StrictModeFailure,
-} from '@grafema/core';
-import type { LogLevel, GraphBackend } from '@grafema/types';
-import { ProgressRenderer } from '../utils/progressRenderer.js';
-import { loadCustomPlugins, createPlugins } from '../plugins/pluginLoader.js';
+} from '@grafema/util';
+import type { LogLevel } from '@grafema/util';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export interface NodeEdgeCountBackend {
   nodeCount: () => Promise<number>;
@@ -53,6 +53,102 @@ function getLogLevel(options: { quiet?: boolean; verbose?: boolean; logLevel?: s
   return 'silent';  // Default: silent logs, clean progress UI
 }
 
+/**
+ * Find grafema-orchestrator binary.
+ *
+ * Search order:
+ * 1. GRAFEMA_ORCHESTRATOR environment variable
+ * 2. Monorepo target/release (development)
+ * 3. Monorepo target/debug (development)
+ * 4. System PATH lookup
+ * 5. ~/.local/bin/grafema-orchestrator (user-installed)
+ */
+function findOrchestratorBinary(): string | null {
+  const binaryName = 'grafema-orchestrator';
+
+  // 1. Environment variable
+  const envBinary = process.env.GRAFEMA_ORCHESTRATOR;
+  if (envBinary && existsSync(envBinary)) {
+    return envBinary;
+  }
+
+  // 2-3. Monorepo development builds
+  const monorepoRoot = findMonorepoRoot();
+  if (monorepoRoot) {
+    const releaseBinary = join(monorepoRoot, 'packages', 'grafema-orchestrator', 'target', 'release', binaryName);
+    if (existsSync(releaseBinary)) {
+      return releaseBinary;
+    }
+
+    const debugBinary = join(monorepoRoot, 'packages', 'grafema-orchestrator', 'target', 'debug', binaryName);
+    if (existsSync(debugBinary)) {
+      return debugBinary;
+    }
+  }
+
+  // 4. System PATH lookup
+  const pathDirs = (process.env.PATH || '').split(delimiter);
+  for (const dir of pathDirs) {
+    if (!dir) continue;
+    const candidate = join(dir, binaryName);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  // 5. User-installed binary in ~/.local/bin
+  const homeBinary = join(process.env.HOME || '', '.local', 'bin', binaryName);
+  if (existsSync(homeBinary)) {
+    return homeBinary;
+  }
+
+  return null;
+}
+
+/**
+ * Find monorepo root by looking for characteristic files.
+ */
+function findMonorepoRoot(): string | null {
+  const searchPaths = [
+    // From packages/cli/dist/commands -> dist -> cli -> packages -> root
+    join(__dirname, '..', '..', '..', '..'),
+    // Environment variable override
+    process.env.GRAFEMA_ROOT,
+  ].filter(Boolean) as string[];
+
+  for (const candidate of searchPaths) {
+    const hasPackagesDir = existsSync(join(candidate, 'packages', 'core'));
+    const hasOrchestrator = existsSync(join(candidate, 'packages', 'grafema-orchestrator', 'Cargo.toml'));
+    if (hasPackagesDir && hasOrchestrator) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Find the grafema.config.yaml config file for the orchestrator.
+ *
+ * Search order:
+ * 1. <projectPath>/grafema.config.yaml
+ * 2. <projectPath>/.grafema/config.yaml (legacy location)
+ */
+function findConfigFile(projectPath: string): string | null {
+  const candidates = [
+    join(projectPath, 'grafema.config.yaml'),
+    join(projectPath, '.grafema', 'config.yaml'),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 export async function analyzeAction(path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; logFile?: string; strict?: boolean; autoStart?: boolean }): Promise<void> {
   const projectPath = resolve(path);
   const grafemaDir = join(projectPath, '.grafema');
@@ -71,21 +167,61 @@ export async function analyzeAction(path: string, options: { service?: string; e
   // Create logger based on CLI flags
   const logLevel = getLogLevel(options);
   const logFile = options.logFile ? resolve(options.logFile) : undefined;
-  const logger = createLogger(logLevel, logFile ? { logFile } : undefined);
+  const _logger = createLogger(logLevel, logFile ? { logFile } : undefined);
 
   if (logFile) {
     debug(`Log file: ${logFile}`);
   }
   debug(`Analyzing project: ${projectPath}`);
 
-  // Connect to RFDB server
+  // Find grafema-orchestrator binary
+  const orchestratorBinary = findOrchestratorBinary();
+  if (!orchestratorBinary) {
+    console.error('');
+    console.error('grafema-orchestrator binary not found.');
+    console.error('');
+    console.error('Options:');
+    console.error('  1. Set environment variable:');
+    console.error('     export GRAFEMA_ORCHESTRATOR=/path/to/grafema-orchestrator');
+    console.error('');
+    console.error('  2. Build from source (in monorepo):');
+    console.error('     cd packages/grafema-orchestrator && cargo build --release');
+    console.error('');
+    console.error('  3. Install to PATH:');
+    console.error('     cp target/release/grafema-orchestrator ~/.local/bin/');
+    console.error('');
+    process.exit(1);
+  }
+
+  debug(`Using orchestrator: ${orchestratorBinary}`);
+
+  // Find config file for the orchestrator
+  const configPath = findConfigFile(projectPath);
+  if (!configPath) {
+    console.error('');
+    console.error('No grafema config file found.');
+    console.error('');
+    console.error('Expected one of:');
+    console.error(`  ${join(projectPath, 'grafema.config.yaml')}`);
+    console.error(`  ${join(projectPath, '.grafema', 'config.yaml')}`);
+    console.error('');
+    console.error('Create a config file with at least:');
+    console.error('  root: "."');
+    console.error('  include:');
+    console.error('    - "src/**/*.js"');
+    console.error('');
+    process.exit(1);
+  }
+
+  debug(`Using config: ${configPath}`);
+
+  // Connect to RFDB server for stats (after orchestrator finishes)
   // Default: require explicit `grafema server start`
   // Use --auto-start for CI or backwards compatibility
-  // In normal mode (not verbose), suppress backend logs for clean progress UI
   const backend = new RFDBServerBackend({
     dbPath,
     autoStart: options.autoStart ?? false,
-    silent: !options.verbose,  // Silent in normal mode (show progress), verbose shows logs
+    silent: !options.verbose,
     clientName: 'cli'
   });
 
@@ -112,174 +248,67 @@ export async function analyzeAction(path: string, options: { service?: string; e
     await backend.clear();
   }
 
-  const config = loadConfig(projectPath, logger);
-
-  // Extract services from config (REG-174)
-  if (config.services.length > 0) {
-    debug(`Loaded ${config.services.length} service(s) from config`);
-    for (const svc of config.services) {
-      const entry = svc.entryPoint ? ` (entry: ${svc.entryPoint})` : '';
-      debug(`  - ${svc.name}: ${svc.path}${entry}`);
-    }
-  }
-
-  // Load custom plugins from .grafema/plugins/
-  const customPlugins = await loadCustomPlugins(projectPath, debug);
-  const plugins = createPlugins(config.plugins, customPlugins, options.verbose);
-
-  debug(`Loaded ${plugins.length} plugins`);
-
-  // Resolve strict mode: CLI flag overrides config
-  const strictMode = options.strict ?? config.strict ?? false;
-  if (strictMode) {
-    debug('Strict mode enabled - analysis will fail on unresolved references');
-  }
-
   const startTime = Date.now();
 
-  // Create progress renderer for CLI output
-  // In quiet mode, use a no-op renderer (skip rendering)
-  // In verbose mode, use non-interactive (newlines per update)
-  // In normal mode, use interactive (spinner with line overwrite)
-  const renderer = options.quiet
-    ? null
-    : new ProgressRenderer({
-        isInteractive: !options.verbose && process.stdout.isTTY,
-      });
+  // Build orchestrator args
+  const args: string[] = ['analyze', '--config', configPath, '--socket', backend.socketPath];
 
-  // Poll graph stats periodically to show node/edge counts in progress
-  let statsInterval: NodeJS.Timeout | null = null;
-  if (renderer && !options.quiet) {
-    statsInterval = setInterval(async () => {
-      try {
-        const stats = await fetchNodeEdgeCounts(backend);
-        renderer.setStats(stats.nodeCount, stats.edgeCount);
-      } catch {
-        // Ignore stats errors during analysis
-      }
-    }, 500); // Poll every 500ms
-    statsInterval.unref?.();
+  if (options.clear) {
+    args.push('--force');
   }
 
-  const orchestrator = new Orchestrator({
-    graph: backend as unknown as GraphBackend,
-    plugins,
-    serviceFilter: options.service || null,
-    entrypoint: options.entrypoint,
-    forceAnalysis: options.clear || false,
-    logger,
-    services: config.services.length > 0 ? config.services : undefined,  // Pass config services (REG-174)
-    strictMode, // REG-330: Pass strict mode flag
-    onProgress: (progress) => {
-      renderer?.update(progress);
-    },
-  });
+  debug(`Spawning: ${orchestratorBinary} ${args.join(' ')}`);
 
   let exitCode = 0;
 
   try {
-    await orchestrator.run(projectPath);
-    await backend.flush();
+    // Spawn grafema-orchestrator
+    exitCode = await new Promise<number>((resolvePromise, reject) => {
+      const child = spawn(orchestratorBinary, args, {
+        stdio: [
+          'ignore',
+          options.quiet ? 'ignore' : 'inherit',
+          options.quiet ? 'ignore' : 'inherit',
+        ],
+        env: {
+          ...process.env,
+          // Pass RUST_LOG for tracing verbosity
+          RUST_LOG: options.verbose ? 'info' : (options.debug ? 'debug' : 'warn'),
+        },
+      });
 
-    const elapsedSeconds = (Date.now() - startTime) / 1000;
-    const stats = await fetchNodeEdgeCounts(backend);
+      child.on('error', (err) => {
+        reject(new Error(`Failed to spawn grafema-orchestrator: ${err.message}`));
+      });
 
-    // Clear progress line in interactive mode, then show results
-    if (renderer && process.stdout.isTTY) {
-      process.stdout.write('\r\x1b[K'); // Clear line
-    }
-    info('');
-    info(renderer ? renderer.finish(elapsedSeconds) : `Analysis complete in ${elapsedSeconds.toFixed(2)}s`);
-    info(`  Nodes: ${stats.nodeCount}`);
-    info(`  Edges: ${stats.edgeCount}`);
+      child.on('close', (code) => {
+        resolvePromise(code ?? 1);
+      });
+    });
 
-    // Get diagnostics and report summary
-    const diagnostics = orchestrator.getDiagnostics();
-    const reporter = new DiagnosticReporter(diagnostics);
+    if (exitCode === 0) {
+      const elapsedSeconds = (Date.now() - startTime) / 1000;
+      const stats = await fetchNodeEdgeCounts(backend);
 
-    // Print summary if there are any issues
-    if (diagnostics.count() > 0) {
       info('');
-      info(reporter.categorizedSummary());
-
-      // In verbose mode, print full report
-      if (options.verbose) {
-        debug('');
-        debug(reporter.report({ format: 'text', includeSummary: false }));
-      }
-    }
-
-    // Always write diagnostics.log (required for `grafema check` command)
-    const writer = new DiagnosticWriter();
-    await writer.write(diagnostics, grafemaDir);
-    if (options.debug) {
-      debug(`Diagnostics written to ${writer.getLogPath(grafemaDir)}`);
-    }
-
-    // Determine exit code based on severity
-    if (diagnostics.hasFatal()) {
-      exitCode = 1;
-    } else if (diagnostics.hasErrors()) {
-      exitCode = 2; // Completed with errors
+      info(`Analysis complete in ${elapsedSeconds.toFixed(2)}s`);
+      info(`  Nodes: ${stats.nodeCount}`);
+      info(`  Edges: ${stats.edgeCount}`);
     } else {
-      exitCode = 0; // Success (maybe warnings)
+      console.error('');
+      console.error(`Analysis failed with exit code ${exitCode}`);
     }
   } catch (e) {
-    const diagnostics = orchestrator.getDiagnostics();
-    const reporter = new DiagnosticReporter(diagnostics);
-
-    // Clear progress line in interactive mode
-    if (renderer && process.stdout.isTTY) {
-      process.stdout.write('\r\x1b[K');
-    }
-
-    // Check if this is a strict mode failure (REG-332: structured output)
-    if (e instanceof StrictModeFailure) {
-      // Format ONLY from diagnostics, not from error.message
-      console.error('');
-      console.error(`✗ Strict mode: ${e.count} unresolved reference(s) found during ENRICHMENT.`);
-      console.error('');
-      console.error(reporter.formatStrict(e.diagnostics, {
-        verbose: options.verbose,
-        suppressedCount: e.suppressedCount,  // REG-332
-      }));
-      console.error('');
-      console.error('Run without --strict for graceful degradation, or fix the underlying issues.');
-    } else {
-      // Generic error handling (non-strict)
-      const error = e instanceof Error ? e : new Error(String(e));
-      console.error('');
-      console.error(`✗ Analysis failed: ${error.message}`);
-      console.error('');
-      console.error('→ Run with --debug for detailed diagnostics');
-
-      if (diagnostics.count() > 0) {
-        console.error('');
-        console.error(reporter.report({ format: 'text', includeSummary: true }));
-      }
-    }
-
-    // Write diagnostics.log in debug mode even on failure
-    if (options.debug) {
-      const writer = new DiagnosticWriter();
-      await writer.write(diagnostics, grafemaDir);
-      console.error(`Diagnostics written to ${writer.getLogPath(grafemaDir)}`);
-    }
-
+    const error = e instanceof Error ? e : new Error(String(e));
+    console.error('');
+    console.error(`Analysis failed: ${error.message}`);
     exitCode = 1;
   } finally {
-    // Stop stats polling
-    if (statsInterval) {
-      clearInterval(statsInterval);
-      statsInterval = null;
-    }
-
     if (backend.connected) {
       await backend.close();
     }
 
     // Exit with appropriate code
-    // 0 = success, 1 = fatal, 2 = errors
     exitWithCode(exitCode);
   }
 }

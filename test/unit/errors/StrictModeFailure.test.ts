@@ -8,8 +8,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 
-import { StrictModeFailure, StrictModeError, type ResolutionStep } from '@grafema/core';
-import type { Diagnostic } from '@grafema/core';
+import { StrictModeFailure, StrictModeError, type ResolutionStep } from '@grafema/util';
+import type { Diagnostic } from '@grafema/util';
 
 // Helper to create test diagnostics
 function createDiagnostic(overrides: Partial<Diagnostic> = {}): Diagnostic {

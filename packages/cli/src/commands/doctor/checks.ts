@@ -17,7 +17,7 @@ import {
   RFDBClient,
   loadConfig,
   GraphFreshnessChecker,
-} from '@grafema/core';
+} from '@grafema/util';
 import type { DoctorCheckResult } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -584,7 +584,7 @@ export async function checkVersions(
   // Read core version
   try {
     const require = createRequire(import.meta.url);
-    const corePkgPath = require.resolve('@grafema/core/package.json');
+    const corePkgPath = require.resolve('@grafema/util/package.json');
     const corePkg = JSON.parse(readFileSync(corePkgPath, 'utf-8'));
     coreVersion = corePkg.version;
   } catch {

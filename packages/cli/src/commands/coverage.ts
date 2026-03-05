@@ -10,7 +10,7 @@
 import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, CoverageAnalyzer, type CoverageResult } from '@grafema/core';
+import { RFDBServerBackend, CoverageAnalyzer, type CoverageResult } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 export const coverageCommand = new Command('coverage')

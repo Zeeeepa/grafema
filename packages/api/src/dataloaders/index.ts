@@ -5,7 +5,7 @@
  * DataLoaders batch and cache database requests within a single GraphQL request.
  */
 
-import type { RFDBServerBackend } from '@grafema/core';
+import type { RFDBServerBackend } from '@grafema/util';
 import { createNodeLoader } from './nodeLoader.js';
 
 export interface DataLoaders {

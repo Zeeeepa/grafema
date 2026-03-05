@@ -9,7 +9,7 @@
 import { Command } from 'commander';
 import { isAbsolute, resolve, join, dirname, relative } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
+import { RFDBServerBackend, findContainingFunction as findContainingFunctionCore } from '@grafema/util';
 import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 

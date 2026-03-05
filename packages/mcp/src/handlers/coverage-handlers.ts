@@ -3,7 +3,7 @@
  */
 
 import { getOrCreateBackend, getProjectPath } from '../state.js';
-import { CoverageAnalyzer } from '@grafema/core';
+import { CoverageAnalyzer } from '@grafema/util';
 import {
   textResult,
   errorResult,
