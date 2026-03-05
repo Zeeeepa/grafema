@@ -190,7 +190,6 @@ jobs:
           echo "Verifying build outputs..."
           # Check that dist directories exist for key packages
           test -d packages/types/dist || (echo "::error::packages/types/dist not found" && exit 1)
-          test -d packages/core/dist || (echo "::error::packages/core/dist not found" && exit 1)
           test -d packages/cli/dist || (echo "::error::packages/cli/dist not found" && exit 1)
           test -d packages/mcp/dist || (echo "::error::packages/mcp/dist not found" && exit 1)
           echo "All build artifacts verified."
@@ -216,7 +215,6 @@ jobs:
           # Check all publishable packages
           PACKAGES=(
             "packages/types"
-            "packages/core"
             "packages/cli"
             "packages/mcp"
             "packages/api"

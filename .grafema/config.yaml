@@ -2,8 +2,8 @@
 
 # Explicit services: monorepo packages with src/ entry points
 services:
-  - name: "core"
-    path: "packages/core"
+  - name: "util"
+    path: "packages/util"
     entryPoint: "src/index.ts"
   - name: "cli"
     path: "packages/cli"

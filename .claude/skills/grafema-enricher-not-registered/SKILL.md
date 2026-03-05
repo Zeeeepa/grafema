@@ -7,7 +7,7 @@ description: |
   graph doesn't have expected edges, (3) a recently discovered plugin that "should be running"
   but its effects aren't visible in the graph, (4) HANDLED_BY, CALLS, or similar edges are
   missing after analysis despite resolver code existing. Root cause: plugin implemented in
-  packages/core but not registered in builtinPlugins.ts (production) and/or
+  packages/util but not registered in builtinPlugins.ts (production) and/or
   createTestOrchestrator.js (integration tests).
 author: Claude Code
 version: 1.0.0
@@ -28,7 +28,7 @@ entire Grafema codebase after analysis (from a different code path).
 - Plugin's edge count is 0 or suspiciously low after `grafema analyze`
 - Unit tests for the plugin pass (plugin is instantiated and run directly in tests)
 - `grafema analyze --verbose` output does not show the plugin running
-- You find a plugin file in `packages/core/src/plugins/enrichment/` that is not in `builtinPlugins.ts`
+- You find a plugin file in `packages/util/src/plugins/enrichment/` that is not in `builtinPlugins.ts`
 - Integration tests don't cover the plugin's behavior (no snapshots reflect its edges)
 
 ## Root Cause
@@ -37,7 +37,7 @@ Grafema has **two separate plugin registries** that must both be updated:
 
 1. **`packages/cli/src/plugins/builtinPlugins.ts`** — Production pipeline registry.
    If a plugin is missing here, it NEVER runs in `grafema analyze`. The plugin may be
-   exported from `packages/core/src/index.ts` but that doesn't make it run automatically.
+   exported from `packages/util/src/index.ts` but that doesn't make it run automatically.
 
 2. **`test/helpers/createTestOrchestrator.js`** — Integration test helper registry.
    If missing here, integration tests and snapshot tests won't cover the plugin's behavior.
@@ -57,10 +57,10 @@ grep -n "ExternalCallResolver\|FunctionCallResolver\|MyPlugin" \
   test/helpers/createTestOrchestrator.js
 
 # Check if it's exported from core index
-grep -n "ExternalCallResolver\|MyPlugin" packages/core/src/index.ts
+grep -n "ExternalCallResolver\|MyPlugin" packages/util/src/index.ts
 ```
 
-A plugin that appears in `packages/core/src/index.ts` but NOT in `builtinPlugins.ts`
+A plugin that appears in `packages/util/src/index.ts` but NOT in `builtinPlugins.ts`
 is a confirmed "implemented but never runs" situation.
 
 ## Solution
@@ -70,11 +70,11 @@ is a confirmed "implemented but never runs" situation.
 ```typescript
 // packages/cli/src/plugins/builtinPlugins.ts
 
-// Add to imports from '@grafema/core':
+// Add to imports from '@grafema/util':
 import {
   // ... existing imports ...
   ExternalCallResolver,  // ADD THIS
-} from '@grafema/core';
+} from '@grafema/util';
 
 // Add to BUILTIN_PLUGINS registry (respect dependency order):
 const BUILTIN_PLUGINS = {
@@ -92,8 +92,8 @@ plugin must be in the registry to be instantiated at all.
 ```javascript
 // test/helpers/createTestOrchestrator.js
 
-import { FunctionCallResolver } from '@grafema/core';
-import { ExternalCallResolver } from '@grafema/core';
+import { FunctionCallResolver } from '@grafema/util';
+import { ExternalCallResolver } from '@grafema/util';
 
 // Inside the enrichment block (if (!options.skipEnrichment)):
 plugins.push(new FunctionCallResolver());
@@ -139,7 +139,7 @@ Result after adding to `builtinPlugins.ts` + `createTestOrchestrator.js`:
 - **Always check both registries** when a plugin produces suspiciously low output
 - Plugin order in `createTestOrchestrator.js` matters for plugins with dependencies
 - After adding to `createTestOrchestrator.js`, update snapshot files to reflect new edges
-- A plugin being exported from `packages/core/src/index.ts` does NOT mean it runs — exports
+- A plugin being exported from `packages/util/src/index.ts` does NOT mean it runs — exports
   only make the plugin available for import, not registered in any pipeline
 - The `metadata.dependencies` declaration is used for ordering but only among registered plugins;
   unregistered plugins are simply never instantiated

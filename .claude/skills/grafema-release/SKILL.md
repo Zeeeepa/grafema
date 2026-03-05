@@ -191,10 +191,10 @@ The script publishes in dependency order automatically:
 
 1. `@grafema/types` (no deps)
 2. `@grafema/rfdb-client` (depends on types)
-3. `@grafema/core` (depends on types, rfdb-client)
-4. `@grafema/mcp` (depends on core, types)
-5. `@grafema/api` (depends on core, types)
-6. `@grafema/cli` (depends on api, core, types)
+3. `@grafema/util` (depends on types, rfdb-client)
+4. `@grafema/mcp` (depends on util, types)
+5. `@grafema/api` (depends on util, types)
+6. `@grafema/cli` (depends on api, util, types)
 7. `@grafema/rfdb` (standalone, Rust binary)
 
 ## dist-tag Management

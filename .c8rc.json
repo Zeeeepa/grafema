@@ -1,7 +1,7 @@
 {
   "all": true,
   "src": [
-    "packages/core/dist",
+    "packages/util/dist",
     "packages/cli/dist",
     "packages/mcp/dist",
     "packages/api/dist",

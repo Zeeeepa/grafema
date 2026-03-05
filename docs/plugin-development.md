@@ -2,7 +2,7 @@
 
 > **Want to teach Grafema about your framework?** Plugins let you detect patterns specific to your codebase — custom ORMs, internal APIs, or any library Grafema doesn't support yet. A simple plugin takes 15 minutes to write.
 
-> **Note:** This guide covers the v1 plugin API. Grafema is transitioning to core-v2, a declarative AST walker that replaces many analysis plugins. For new framework analyzers, consider using the v1 plugin system. For core language constructs, see [@grafema/core-v2](../packages/core-v2/README.md).
+> **Note:** This guide covers the v1 plugin API. Core language analysis is now handled by the Rust-based orchestrator (`grafema-orchestrator`). This plugin system is used for framework-specific analyzers and enrichment plugins.
 
 ## Plugin Architecture
 
@@ -454,15 +454,15 @@ To add a plugin to the Grafema codebase:
 
 1. Create the file in the appropriate directory:
    ```
-   packages/core/src/plugins/analysis/FastifyRouteAnalyzer.ts
+   packages/util/src/plugins/analysis/FastifyRouteAnalyzer.ts
    ```
 
-2. Add export to `packages/core/src/index.ts`:
+2. Add export to `packages/util/src/index.ts`:
    ```typescript
    export { FastifyRouteAnalyzer } from './plugins/analysis/FastifyRouteAnalyzer.js';
    ```
 
-3. Add to DEFAULT_CONFIG in `packages/core/src/config/ConfigLoader.ts` if it should be enabled by default.
+3. Register in `packages/cli/src/plugins/builtinPlugins.ts` if it should run by default.
 
 ### Custom Plugins in Project
 
@@ -483,7 +483,7 @@ Supported extensions: `.js`, `.mjs`, `.cjs`
 **ESM Plugin Example (`.mjs`):**
 ```javascript
 // .grafema/plugins/MyAnalyzer.mjs
-import { Plugin, createSuccessResult } from '@grafema/core';
+import { Plugin, createSuccessResult } from '@grafema/util';
 
 export default class MyAnalyzer extends Plugin {
   get metadata() {
@@ -508,7 +508,7 @@ If your plugin needs to import CommonJS modules from the target project (e.g., l
 ```javascript
 // .grafema/plugins/LegacyConfigReader.mjs
 import { createRequire } from 'module';
-import { Plugin, createSuccessResult } from '@grafema/core';
+import { Plugin, createSuccessResult } from '@grafema/util';
 
 export default class LegacyConfigReader extends Plugin {
   get metadata() {

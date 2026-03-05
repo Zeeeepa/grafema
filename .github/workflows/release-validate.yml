@@ -116,7 +116,6 @@ jobs:
           # Check all packages
           PACKAGES=(
             "packages/types"
-            "packages/core"
             "packages/cli"
             "packages/mcp"
             "packages/api"

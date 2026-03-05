@@ -226,7 +226,7 @@ MCP tools are deferred — load them via `ToolSearch` before first use (e.g., `T
 | Read file to understand deps | `mcp__grafema__trace_dataflow` or `mcp__grafema__get_file_overview` |
 | Read file to understand structure | `mcp__grafema__get_file_overview` or `mcp__grafema__get_function_details` |
 | Multiple Reads to understand impact | `mcp__grafema__query_graph` with Datalog |
-| Find cross-package imports | `query_graph` with `attr(X, "source", "@grafema/core")` |
+| Find cross-package imports | `query_graph` with `attr(X, "source", "@grafema/util")` |
 
 **Fallback to file reads ONLY when:**
 1. Graph returned 0 results AND you verified the query was correct

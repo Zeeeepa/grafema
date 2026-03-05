@@ -141,7 +141,7 @@ Publication order (handled automatically):
 
 1. `@grafema/types`
 2. `@grafema/rfdb-client`
-3. `@grafema/core`
+3. `@grafema/util`
 4. `@grafema/mcp`
 5. `@grafema/api`
 6. `@grafema/cli`

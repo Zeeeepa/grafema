@@ -67,7 +67,7 @@ pnpm build
 
 # 2. Pack all packages (pnpm pack resolves workspace:* protocol)
 mkdir -p /tmp/grafema-packs
-for pkg in types rfdb-client core rfdb cli api; do
+for pkg in types rfdb-client util rfdb cli api; do
   pnpm -C "packages/$pkg" pack --pack-destination /tmp/grafema-packs
 done
 
@@ -80,7 +80,7 @@ cat > package.json << 'EOF'
   "type": "module",
   "dependencies": {
     "@grafema/cli": "file:/packs/grafema-cli-0.2.5-beta.tgz",
-    "@grafema/core": "file:/packs/grafema-core-0.2.5-beta.tgz",
+    "@grafema/util": "file:/packs/grafema-util-0.2.5-beta.tgz",
     "@grafema/types": "file:/packs/grafema-types-0.2.5-beta.tgz",
     "@grafema/rfdb-client": "file:/packs/grafema-rfdb-client-0.2.5-beta.tgz",
     "@grafema/api": "file:/packs/grafema-api-0.2.5-beta.tgz"

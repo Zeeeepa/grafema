@@ -83,10 +83,10 @@ Then connect to `ws://localhost:7474` locally.
 
 ### Programmatic usage
 
-Server lifecycle is managed through `@grafema/core`:
+Server lifecycle is managed through `@grafema/util`:
 
 ```javascript
-const { startRfdbServer, RFDBServerBackend } = require('@grafema/core');
+const { startRfdbServer, RFDBServerBackend } = require('@grafema/util');
 
 // Start server (handles binary discovery, socket polling, PID file)
 const server = await startRfdbServer({
@@ -116,12 +116,10 @@ if (!isAvailable()) {
 RFDB is the default storage backend for Grafema. The MCP server and CLI auto-start RFDB when needed.
 
 ```javascript
-const { Orchestrator, RFDBServerBackend } = require('@grafema/core');
+const { RFDBServerBackend } = require('@grafema/util');
 
-const orchestrator = new Orchestrator({
-  rootDir: './src',
-  backend: new RFDBServerBackend({ socketPath: '.grafema/rfdb.sock' }),
-});
+const backend = new RFDBServerBackend({ socketPath: '.grafema/rfdb.sock' });
+await backend.connect();
 ```
 
 ## Features

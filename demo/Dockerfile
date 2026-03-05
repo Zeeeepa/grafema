@@ -35,7 +35,6 @@ WORKDIR /build
 # Copy dependency manifests first (layer caching)
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/types/package.json packages/types/
-COPY packages/core/package.json packages/core/
 COPY packages/cli/package.json packages/cli/
 COPY packages/api/package.json packages/api/
 COPY packages/mcp/package.json packages/mcp/

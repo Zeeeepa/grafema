@@ -72,7 +72,7 @@ fi
 PACKAGES=(
     "packages/types"
     "packages/rfdb"
-    "packages/core"
+    "packages/util"
     "packages/mcp"
     "packages/api"
     "packages/cli"

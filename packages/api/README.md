@@ -34,7 +34,7 @@ grafema server graphql --port 4000
 
 ```typescript
 import { createGraphQLServer, startServer } from '@grafema/api';
-import { RFDBServerBackend } from '@grafema/core';
+import { RFDBServerBackend } from '@grafema/util';
 
 // Connect to RFDB
 const backend = new RFDBServerBackend({ socketPath: '/tmp/grafema.sock' });

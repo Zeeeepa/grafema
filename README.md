@@ -138,8 +138,7 @@ Currently supported:
 | Package | Description |
 |---------|-------------|
 | [@grafema/cli](./packages/cli) | Command-line interface |
-| [@grafema/core](./packages/core) | Core analysis engine (v1 plugins) |
-| [@grafema/core-v2](./packages/core-v2) | Declarative AST walker engine |
+| [@grafema/util](./packages/util) | Query layer, config, diagnostics, RFDB lifecycle |
 | [@grafema/mcp](./packages/mcp) | MCP server for AI assistants |
 | [@grafema/api](./packages/api) | GraphQL API server |
 | [@grafema/types](./packages/types) | Type definitions |
@@ -150,36 +149,22 @@ Currently supported:
 ## Programmatic Usage
 
 ```typescript
-import { Orchestrator } from '@grafema/core';
+import { RFDBServerBackend, startRfdbServer } from '@grafema/util';
 
-const orchestrator = new Orchestrator({
-  rootDir: './src',
+// Start RFDB server and connect
+const server = await startRfdbServer({
+  dbPath: '.grafema/graph.rfdb',
+  socketPath: '.grafema/rfdb.sock',
 });
 
-await orchestrator.initialize();
-await orchestrator.run();
+const backend = new RFDBServerBackend({ socketPath: '.grafema/rfdb.sock' });
+await backend.connect();
 
 // Query the graph
-const handlers = await orchestrator.query('http:handler');
+const nodes = await backend.findByType('FUNCTION');
 ```
 
-### With RFDB (Persistent Storage)
-
-For larger codebases or persistent storage:
-
-```typescript
-import { Orchestrator, RFDBServerBackend } from '@grafema/core';
-
-const orchestrator = new Orchestrator({
-  rootDir: './src',
-  backend: new RFDBServerBackend({ socketPath: '/tmp/rfdb.sock' }),
-});
-```
-
-Start the RFDB server (`@grafema/rfdb`):
-```bash
-npx @grafema/rfdb ./rfdb-data --socket /tmp/rfdb.sock
-```
+Analysis is done via the CLI (`grafema analyze`), which uses the Rust-based orchestrator.
 
 ## Requirements
 
