@@ -1,13 +1,6 @@
 //! Columnar binary storage
 
-pub mod segment;
-pub mod delta;
-pub mod string_table;
-pub mod writer;
-
 use serde::{Deserialize, Serialize};
-
-pub use writer::{SegmentWriter, GraphMetadata};
 
 /// Node record in columnar format
 #[derive(Debug, Clone, Serialize, Deserialize)]

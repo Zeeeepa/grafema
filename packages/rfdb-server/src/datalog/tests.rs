@@ -365,13 +365,12 @@ mod parser_tests {
 
 mod eval_tests {
     use super::*;
-    use crate::graph::{GraphEngine, GraphStore};
+    use crate::graph::{GraphEngineV2, GraphStore};
     use crate::storage::{NodeRecord, EdgeRecord};
-    use tempfile::tempdir;
 
-    fn setup_test_graph() -> GraphEngine {
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+    fn setup_test_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         // Add test nodes
         engine.add_nodes(vec![
@@ -694,8 +693,7 @@ mod eval_tests {
     #[test]
     fn test_guarantee_all_variables_assigned() {
         // Setup: Create a graph with VARIABLE nodes, some with ASSIGNED_FROM, some without
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -856,8 +854,7 @@ mod eval_tests {
     #[test]
     fn test_eval_attr_metadata() {
         // Create a graph with metadata
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         // Add a CALL node with "object" and "method" in metadata
         engine.add_nodes(vec![
@@ -922,8 +919,7 @@ mod eval_tests {
     fn test_eval_attr_nested_path() {
         // Test nested path resolution in attr() predicate
         // attr(N, "config.port", V) should extract metadata["config"]["port"]
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -959,8 +955,7 @@ mod eval_tests {
     #[test]
     fn test_eval_attr_nested_number() {
         // Test nested number extraction - numbers should be converted to strings
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -997,8 +992,7 @@ mod eval_tests {
     fn test_eval_attr_literal_key_with_dots() {
         // Backward compatibility: literal keys containing dots should take precedence
         // over nested path resolution
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -1036,8 +1030,7 @@ mod eval_tests {
     #[test]
     fn test_eval_attr_nested_path_not_found() {
         // Missing nested path should return empty results
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -1073,8 +1066,7 @@ mod eval_tests {
     fn test_guarantee_call_without_target() {
         // Test: Find CALL nodes without "object" that don't have CALLS edge
         // This represents internal function calls that don't resolve
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             // CALL_SITE (internal function call) - has CALLS edge
@@ -1289,8 +1281,7 @@ mod eval_tests {
     #[test]
     fn test_eval_neq_in_rule() {
         // Test neq in a rule context
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -1460,8 +1451,7 @@ mod eval_tests {
     #[test]
     fn test_eval_query_attr_value_binding() {
         // Setup graph with metadata
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -1522,8 +1512,7 @@ mod eval_tests {
     #[test]
     fn test_eval_query_attr_with_filter() {
         // Setup graph with metadata
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -1590,8 +1579,7 @@ mod eval_tests {
     fn test_eval_attr_edge_basic() {
         // Test basic edge metadata extraction
         // attr_edge(Src, Dst, EdgeType, AttrName, Value)
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -1655,8 +1643,7 @@ mod eval_tests {
     #[test]
     fn test_eval_attr_edge_nested_path() {
         // Test nested path in edge metadata (e.g., "cardinality.scale")
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -1719,8 +1706,7 @@ mod eval_tests {
     #[test]
     fn test_eval_attr_edge_constant_match() {
         // Test matching against a constant value
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -1794,8 +1780,7 @@ mod eval_tests {
     #[test]
     fn test_eval_attr_edge_no_metadata() {
         // Edge without metadata should return empty
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -1858,8 +1843,7 @@ mod eval_tests {
     #[test]
     fn test_eval_attr_edge_missing_attr() {
         // Missing attribute in edge metadata should return empty
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -1921,8 +1905,7 @@ mod eval_tests {
     #[test]
     fn test_eval_attr_edge_edge_not_found() {
         // Non-existent edge should return empty
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -2073,8 +2056,7 @@ mod eval_tests {
     #[test]
     fn test_eval_attr_edge_in_rule() {
         // Test attr_edge() used in a Datalog rule context
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             NodeRecord {
@@ -2268,9 +2250,8 @@ mod eval_tests {
     // --- Tests 1-8: Integration tests via evaluator ---
 
     /// Helper: set up a graph with CALL nodes, attributes, and edges for reorder tests
-    fn setup_reorder_test_graph() -> GraphEngine {
-        let dir = tempdir().unwrap();
-        let mut engine = GraphEngine::create(dir.path()).unwrap();
+    fn setup_reorder_test_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
 
         engine.add_nodes(vec![
             // CALL node: handleRequest
@@ -2753,9 +2734,8 @@ mod eval_tests {
         ///   -[CONTAINS]-> FUNCTION(id=11, name="myMethod")
         ///     -[HAS_SCOPE]-> SCOPE(id=22)
         ///       -[CONTAINS]-> CALL(id=32)
-        fn setup_parent_function_graph() -> GraphEngine {
-            let dir = tempdir().unwrap();
-            let mut engine = GraphEngine::create(dir.path()).unwrap();
+        fn setup_parent_function_graph() -> GraphEngineV2 {
+            let mut engine = GraphEngineV2::create_ephemeral();
 
             engine.add_nodes(vec![
                 // MODULE node
@@ -3296,5 +3276,258 @@ mod eval_tests {
             assert!(!result.explain_steps.is_empty(),
                 "explain steps should be non-empty, confirming parent_function dispatch works");
         }
+    }
+}
+
+// ============================================================================
+// Phase 7: Reverse attr lookup tests
+// ============================================================================
+
+mod attr_reverse_lookup_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::{NodeRecord, EdgeRecord};
+    use crate::datalog::eval::Evaluator;
+
+
+    fn setup_reverse_lookup_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("queue:publish".to_string()),
+                name: Some("orders-pub".to_string()),
+                file: Some("api.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"{"channel":"orders"}"#.to_string()),
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("queue:consume".to_string()),
+                name: Some("orders-con".to_string()),
+                file: Some("worker.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"{"channel":"orders"}"#.to_string()),
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 3,
+                node_type: Some("queue:publish".to_string()),
+                name: Some("orphan-pub".to_string()),
+                file: Some("orphan.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 4,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("processOrder".to_string()),
+                file: Some("worker.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+        ]);
+
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 1,
+                dst: 4,
+                edge_type: Some("CALLS".to_string()),
+                version: "main".into(),
+                metadata: None,
+                deleted: false,
+            },
+            EdgeRecord {
+                src: 4,
+                dst: 2,
+                edge_type: Some("CALLS".to_string()),
+                version: "main".into(),
+                metadata: None,
+                deleted: false,
+            },
+        ], false);
+
+        engine
+    }
+
+    // attr(X, "name", "orders-pub") with unbound X returns node 1
+    #[test]
+    fn test_eval_attr_reverse_lookup_name() {
+        let engine = setup_reverse_lookup_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("name"),
+            Term::constant("orders-pub"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Id(1)));
+    }
+
+    // attr(X, "file", "worker.js") returns nodes 2, 4
+    #[test]
+    fn test_eval_attr_reverse_lookup_file() {
+        let engine = setup_reverse_lookup_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("file"),
+            Term::constant("worker.js"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        let mut ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![2, 4]);
+    }
+
+    // attr(X, "type", "queue:publish") returns nodes 1, 3
+    #[test]
+    fn test_eval_attr_reverse_lookup_type() {
+        let engine = setup_reverse_lookup_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("type"),
+            Term::constant("queue:publish"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        let mut ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 3]);
+    }
+
+    // attr(X, "channel", "orders") with metadata filter
+    #[test]
+    fn test_eval_attr_reverse_lookup_metadata() {
+        let engine = setup_reverse_lookup_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("channel"),
+            Term::constant("orders"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        let mut ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    // Returns empty when no node matches
+    #[test]
+    fn test_eval_attr_reverse_lookup_no_match() {
+        let engine = setup_reverse_lookup_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("name"),
+            Term::constant("nonexistent"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert!(results.is_empty());
+    }
+
+    // Reorder places attr(X, "name", "foo") before incoming(X, Y, "CALLS")
+    // Before the fix, both would fail to place (circular dep). After the fix,
+    // attr reverse provides X, enabling incoming to be placed.
+    #[test]
+    fn test_reorder_attr_reverse_before_incoming() {
+        use crate::datalog::utils::reorder_literals;
+
+        // incoming requires X bound; attr reverse lookup provides X
+        let literals = vec![
+            Literal::positive(Atom::new("incoming", vec![
+                Term::var("X"),
+                Term::var("Y"),
+                Term::constant("CALLS"),
+            ])),
+            Literal::positive(Atom::new("attr", vec![
+                Term::var("X"),
+                Term::constant("name"),
+                Term::constant("orders-pub"),
+            ])),
+        ];
+
+        let ordered = reorder_literals(&literals).unwrap();
+
+        // attr should come first (it provides X via reverse lookup)
+        assert_eq!(ordered[0].atom().predicate(), "attr",
+            "attr reverse lookup should be reordered before incoming");
+        assert_eq!(ordered[1].atom().predicate(), "incoming");
+    }
+
+    // End-to-end: attr(X, "name", "orders-pub"), edge(X, Y, "CALLS") works
+    #[test]
+    fn test_eval_query_attr_reverse_in_conjunction() {
+        let engine = setup_reverse_lookup_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let literals = parse_query(
+            r#"attr(X, "name", "orders-pub"), edge(X, Y, "CALLS")"#
+        ).unwrap();
+
+        let results = evaluator.eval_query(&literals).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Id(1)));
+        assert_eq!(results[0].get("Y"), Some(&Value::Id(4)));
+    }
+
+    // End-to-end with EvaluatorExplain to verify the mirror
+    #[test]
+    fn test_eval_attr_reverse_lookup_explain() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_reverse_lookup_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        let literals = parse_query(
+            r#"attr(X, "name", "orders-pub"), edge(X, Y, "CALLS")"#
+        ).unwrap();
+
+        let result = evaluator.eval_query(&literals).unwrap();
+        assert_eq!(result.bindings.len(), 1);
+        assert_eq!(result.bindings[0].get("X"), Some(&"1".to_string()));
+        assert_eq!(result.bindings[0].get("Y"), Some(&"4".to_string()));
+        assert!(!result.explain_steps.is_empty());
     }
 }

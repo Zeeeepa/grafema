@@ -1,9 +1,10 @@
 //! Datalog evaluator
 //!
-//! Evaluates Datalog queries against a GraphEngine.
+//! Evaluates Datalog queries against a GraphStore.
 
 use std::collections::HashMap;
 use crate::graph::GraphStore;
+use crate::storage::AttrQuery;
 use crate::datalog::types::*;
 use super::utils::reorder_literals;
 
@@ -452,13 +453,29 @@ impl<'a> Evaluator<'a> {
         let attr_term = &args[1];
         let value_term = &args[2];
 
-        // Need bound node ID
+        // Reverse lookup: attr(X, "name", "foo") — X unbound, attr name and value both constant
+        if let (Term::Var(id_var), Term::Const(attr_name), Term::Const(expected_value)) =
+            (id_term, attr_term, value_term)
+        {
+            let query = Self::attr_to_query(attr_name, expected_value);
+            let ids = self.engine.find_by_attr(&query);
+            return ids
+                .into_iter()
+                .map(|id| {
+                    let mut b = Bindings::new();
+                    b.set(id_var, Value::Id(id));
+                    b
+                })
+                .collect();
+        }
+
+        // Forward lookup: need bound node ID
         let node_id = match id_term {
             Term::Const(id_str) => match id_str.parse::<u128>() {
                 Ok(id) => id,
                 Err(_) => return vec![],
             },
-            _ => return vec![], // Need bound ID for now
+            _ => return vec![],
         };
 
         // Get the node
@@ -467,10 +484,10 @@ impl<'a> Evaluator<'a> {
             None => return vec![],
         };
 
-        // Get attribute name (must be constant for now)
+        // Get attribute name (must be constant)
         let attr_name = match attr_term {
             Term::Const(name) => name.as_str(),
-            _ => return vec![], // Need constant attr name
+            _ => return vec![],
         };
 
         // Get attribute value based on name
@@ -495,7 +512,7 @@ impl<'a> Evaluator<'a> {
         // Check if attribute exists
         let attr_value = match attr_value {
             Some(v) => v,
-            None => return vec![], // Attribute doesn't exist
+            None => return vec![],
         };
 
         // Match against value term
@@ -507,15 +524,27 @@ impl<'a> Evaluator<'a> {
             }
             Term::Const(expected) => {
                 if &attr_value == expected {
-                    vec![Bindings::new()] // Match succeeded
+                    vec![Bindings::new()]
                 } else {
-                    vec![] // No match
+                    vec![]
                 }
             }
             Term::Wildcard => {
-                vec![Bindings::new()] // Wildcard always matches if attr exists
+                vec![Bindings::new()]
             }
         }
+    }
+
+    /// Build an AttrQuery from a Datalog attribute name and value.
+    fn attr_to_query(attr_name: &str, value: &str) -> AttrQuery {
+        let mut query = AttrQuery::default();
+        match attr_name {
+            "name" => query.name = Some(value.to_string()),
+            "file" => query.file = Some(value.to_string()),
+            "type" => query.node_type = Some(value.to_string()),
+            _ => query.metadata_filters = vec![(attr_name.to_string(), value.to_string())],
+        }
+        query
     }
 
     /// Evaluate attr_edge(Src, Dst, EdgeType, AttrName, Value) predicate - access edge metadata

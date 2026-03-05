@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 
 use crate::graph::GraphStore;
+use crate::storage::AttrQuery;
 use crate::datalog::types::*;
 use crate::datalog::eval::{Value, Bindings};
 use super::utils::reorder_literals;
@@ -559,6 +560,25 @@ impl<'a> EvaluatorExplain<'a> {
         let attr_term = &args[1];
         let value_term = &args[2];
 
+        // Reverse lookup: attr(X, "name", "foo") — X unbound, attr name and value both constant
+        if let (Term::Var(id_var), Term::Const(attr_name), Term::Const(expected_value)) =
+            (id_term, attr_term, value_term)
+        {
+            self.stats.find_by_type_calls += 1;
+            let query = Self::attr_to_query(attr_name, expected_value);
+            let ids = self.engine.find_by_attr(&query);
+            self.stats.nodes_visited += ids.len();
+            return ids
+                .into_iter()
+                .map(|id| {
+                    let mut b = Bindings::new();
+                    b.set(id_var, Value::Id(id));
+                    b
+                })
+                .collect();
+        }
+
+        // Forward lookup: need bound node ID
         let node_id = match id_term {
             Term::Const(id_str) => match id_str.parse::<u128>() {
                 Ok(id) => id,
@@ -619,6 +639,18 @@ impl<'a> EvaluatorExplain<'a> {
                 vec![Bindings::new()]
             }
         }
+    }
+
+    /// Build an AttrQuery from a Datalog attribute name and value.
+    fn attr_to_query(attr_name: &str, value: &str) -> AttrQuery {
+        let mut query = AttrQuery::default();
+        match attr_name {
+            "name" => query.name = Some(value.to_string()),
+            "file" => query.file = Some(value.to_string()),
+            "type" => query.node_type = Some(value.to_string()),
+            _ => query.metadata_filters = vec![(attr_name.to_string(), value.to_string())],
+        }
+        query
     }
 
     /// Evaluate path(Src, Dst) predicate using BFS

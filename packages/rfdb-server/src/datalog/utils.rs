@@ -169,22 +169,35 @@ fn positive_can_place_and_provides(
             (true, provides)
         }
         "attr" => {
-            // attr(id, name, val) — requires id AND name to be Const or in bound
+            // attr(id, name, val)
             if args.len() < 3 {
                 return (true, HashSet::new());
             }
             let id_ok = is_bound_or_const(&args[0], bound);
             let name_ok = is_bound_or_const(&args[1], bound);
-            let can_place = id_ok && name_ok;
-            let mut provides = HashSet::new();
-            if can_place {
+            let val_ok = is_bound_or_const(&args[2], bound);
+
+            if id_ok && name_ok {
+                // Forward lookup: id and name bound → provides val
+                let mut provides = HashSet::new();
                 if let Term::Var(v) = &args[2] {
                     if !bound.contains(v) {
                         provides.insert(v.clone());
                     }
                 }
+                (true, provides)
+            } else if !id_ok && name_ok && val_ok {
+                // Reverse lookup: name and val bound → provides id
+                let mut provides = HashSet::new();
+                if let Term::Var(v) = &args[0] {
+                    if !bound.contains(v) {
+                        provides.insert(v.clone());
+                    }
+                }
+                (true, provides)
+            } else {
+                (false, HashSet::new())
             }
-            (can_place, provides)
         }
         "attr_edge" => {
             // attr_edge(src, dst, etype, name, val) — requires src, dst, etype, name

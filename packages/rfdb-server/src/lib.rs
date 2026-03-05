@@ -1,20 +1,17 @@
-//! RFDB (ReginaFlowDB) - high-performance graph engine based on mmap
+//! RFDB (ReginaFlowDB) - high-performance graph engine
 //!
 //! # Architecture
 //!
-//! - **Columnar storage**: nodes.bin, edges.bin, strings.bin
+//! - **V2 columnar storage**: segment-based with snapshots
 //! - **Deterministic IDs**: BLAKE3(type|name|scope|path)
-//! - **Delta-log**: In-memory change buffer
-//! - **Background compaction**: Merge delta → immutable segments
-//! - **Zero-copy access**: memmap2 without copying to RAM
+//! - **Datalog query engine**: declarative graph queries
 //!
 //! # Usage example
 //!
 //! ```no_run
-//! use rfdb::{GraphEngine, GraphStore, NodeRecord, EdgeRecord};
+//! use rfdb::{GraphEngineV2, GraphStore, NodeRecord, EdgeRecord};
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut engine = GraphEngine::create("./graph.rfdb")?;
+//! let mut engine = GraphEngineV2::create_ephemeral();
 //!
 //! // Add nodes with string types
 //! engine.add_nodes(vec![
@@ -34,11 +31,9 @@
 //!     }
 //! ]);
 //!
-//! // BFS обход
+//! // BFS traversal
 //! let endpoints = engine.bfs(&[123456789], 10, &["CALLS"]); // depth=10
 //! println!("Found {} endpoints", endpoints.len());
-//! # Ok(())
-//! # }
 //! ```
 
 pub mod graph;
@@ -50,10 +45,7 @@ pub mod database_manager;
 pub mod session;
 pub mod metrics;
 
-#[cfg(feature = "napi")]
-pub mod ffi;
-
-pub use graph::{GraphStore, GraphEngine};
+pub use graph::{GraphStore, GraphEngineV2};
 pub use storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, FieldType};
 pub use error::{GraphError, Result};
 
@@ -62,7 +54,3 @@ pub use graph::{compute_node_id, string_id_to_u128};
 
 // Re-export metrics types
 pub use metrics::{Metrics, MetricsSnapshot, SLOW_QUERY_THRESHOLD_MS};
-
-// Re-export NAPI bindings when feature is enabled
-#[cfg(feature = "napi")]
-pub use ffi::*;

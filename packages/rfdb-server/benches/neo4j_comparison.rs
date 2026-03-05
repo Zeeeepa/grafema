@@ -4,7 +4,8 @@
 //! Run: cargo bench --bench neo4j_comparison
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rfdb::{GraphEngine, GraphStore, NodeRecord, EdgeRecord};
+use rfdb::{GraphStore, NodeRecord, EdgeRecord};
+use rfdb::graph::GraphEngineV2;
 use tempfile::TempDir;
 
 // Placeholder for Neo4j client (requires neo4j crate)
@@ -61,7 +62,7 @@ fn bench_rust_vs_neo4j_add_nodes(c: &mut Criterion) {
     group.bench_function("rfdb", |b| {
         b.iter(|| {
             let dir = TempDir::new().unwrap();
-            let mut engine = GraphEngine::create(dir.path()).unwrap();
+            let mut engine = GraphEngineV2::create(dir.path()).unwrap();
             engine.add_nodes(black_box(nodes.clone()));
         });
     });
@@ -84,7 +85,7 @@ fn bench_rust_vs_neo4j_find_by_type(c: &mut Criterion) {
 
     // RFDB engine
     let dir = TempDir::new().unwrap();
-    let mut engine = GraphEngine::create(dir.path()).unwrap();
+    let mut engine = GraphEngineV2::create(dir.path()).unwrap();
 
     let nodes: Vec<NodeRecord> = (0..10000)
         .map(|i| NodeRecord {
@@ -131,7 +132,7 @@ fn bench_rust_vs_neo4j_bfs(c: &mut Criterion) {
 
     // RFDB engine
     let dir = TempDir::new().unwrap();
-    let mut engine = GraphEngine::create(dir.path()).unwrap();
+    let mut engine = GraphEngineV2::create(dir.path()).unwrap();
 
     // Create graph: chain 1->2->3->...->100
     let nodes: Vec<NodeRecord> = (0..100)

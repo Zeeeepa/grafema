@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, BatchSize};
 use rfdb::graph::GraphEngineV2;
-use rfdb::{GraphEngine, GraphStore, NodeRecord};
+use rfdb::{GraphStore, NodeRecord};
 use rfdb::storage_v2::types::NodeRecordV2;
 use tempfile::TempDir;
 
@@ -76,45 +76,6 @@ fn make_changed_nodes() -> Vec<NodeRecordV2> {
     make_v2_file_nodes(0, 999)
 }
 
-/// Create v1 nodes for one file.
-fn make_v1_file_nodes(file_idx: usize) -> Vec<NodeRecord> {
-    let file = format!("src/file_{}.js", file_idx);
-    (0..NODES_PER_FILE)
-        .map(|n| {
-            let global_idx = file_idx * NODES_PER_FILE + n;
-            NodeRecord {
-                id: global_idx as u128,
-                node_type: Some("FUNCTION".to_string()),
-                file_id: file_idx as u32,
-                name_offset: n as u32,
-                version: "main".to_string(),
-                exported: n % 10 == 0,
-                replaces: None,
-                deleted: false,
-                name: Some(format!("func_{}", global_idx)),
-                file: Some(file.clone()),
-                metadata: None,
-                semantic_id: None,
-            }
-        })
-        .collect()
-}
-
-/// Create a pre-built v1 graph with `file_count` files (100 nodes each).
-fn create_pre_built_v1_graph(file_count: usize) -> (TempDir, GraphEngine) {
-    let dir = TempDir::new().unwrap();
-    let mut engine = GraphEngine::create(dir.path()).unwrap();
-
-    let all_nodes: Vec<NodeRecord> = (0..file_count)
-        .flat_map(|f| make_v1_file_nodes(f))
-        .collect();
-
-    engine.add_nodes(all_nodes);
-    engine.flush().unwrap();
-
-    (dir, engine)
-}
-
 // ---------------------------------------------------------------------------
 // Benchmarks
 // ---------------------------------------------------------------------------
@@ -149,25 +110,6 @@ fn bench_reanalysis(c: &mut Criterion) {
     }
     group.finish();
 
-    // ── v1: add_nodes + flush baseline (no file-level semantics) ──
-    let mut group = c.benchmark_group("v1/reanalysis");
-    for file_count in [10, 100, 1000] {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(file_count),
-            &file_count,
-            |b, &file_count| {
-                b.iter_batched(
-                    || create_pre_built_v1_graph(file_count),
-                    |(_dir, mut engine)| {
-                        engine.add_nodes(black_box(make_v1_file_nodes(0)));
-                        black_box(engine.flush().unwrap());
-                    },
-                    BatchSize::LargeInput,
-                );
-            },
-        );
-    }
-    group.finish();
 }
 
 // ---------------------------------------------------------------------------

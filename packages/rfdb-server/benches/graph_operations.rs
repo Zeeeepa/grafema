@@ -9,16 +9,17 @@
 //! Run: cargo bench --bench graph_operations
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, BatchSize};
-use rfdb::{GraphEngine, GraphStore, NodeRecord, EdgeRecord, AttrQuery};
+use rfdb::{GraphStore, NodeRecord, EdgeRecord, AttrQuery};
+use rfdb::graph::GraphEngineV2;
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn create_test_graph(node_count: usize, edge_count: usize) -> (TempDir, GraphEngine) {
+fn create_test_graph(node_count: usize, edge_count: usize) -> (TempDir, GraphEngineV2) {
     let dir = TempDir::new().unwrap();
-    let mut engine = GraphEngine::create(dir.path()).unwrap();
+    let mut engine = GraphEngineV2::create(dir.path()).unwrap();
 
     let nodes: Vec<NodeRecord> = (0..node_count)
         .map(|i| NodeRecord {
@@ -57,9 +58,9 @@ fn create_test_graph(node_count: usize, edge_count: usize) -> (TempDir, GraphEng
 
 /// Create graph with multiple node types for wildcard benchmarks.
 /// Types: "http:request", "http:response", "http:middleware", "db:query", "db:connection"
-fn create_multi_type_graph(node_count: usize) -> (TempDir, GraphEngine) {
+fn create_multi_type_graph(node_count: usize) -> (TempDir, GraphEngineV2) {
     let dir = TempDir::new().unwrap();
-    let mut engine = GraphEngine::create(dir.path()).unwrap();
+    let mut engine = GraphEngineV2::create(dir.path()).unwrap();
 
     let types = [
         "http:request", "http:response", "http:middleware",
@@ -131,7 +132,7 @@ fn bench_add_nodes(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             b.iter(|| {
                 let dir = TempDir::new().unwrap();
-                let mut engine = GraphEngine::create(dir.path()).unwrap();
+                let mut engine = GraphEngineV2::create(dir.path()).unwrap();
                 engine.add_nodes(black_box(make_nodes(size)));
             });
         });
@@ -216,7 +217,7 @@ fn bench_reachability(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
             b.iter(|| {
-                black_box(engine.reachability(black_box(&[0]), 10, &["CALLS"], false));
+                black_box(rfdb::graph::reachability(&engine, black_box(&[0]), 10, &["CALLS"], false));
             });
         });
     }
@@ -232,7 +233,7 @@ fn bench_reachability_backward(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
             b.iter(|| {
-                black_box(engine.reachability(black_box(&[50]), 10, &["CALLS"], true));
+                black_box(rfdb::graph::reachability(&engine, black_box(&[50]), 10, &["CALLS"], true));
             });
         });
     }
@@ -247,7 +248,7 @@ fn bench_flush(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             b.iter(|| {
                 let dir = TempDir::new().unwrap();
-                let mut engine = GraphEngine::create(dir.path()).unwrap();
+                let mut engine = GraphEngineV2::create(dir.path()).unwrap();
                 engine.add_nodes(make_nodes(size));
                 black_box(engine.flush().unwrap());
             });
@@ -269,7 +270,7 @@ fn bench_add_edges(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let dir = TempDir::new().unwrap();
-                    let mut engine = GraphEngine::create(dir.path()).unwrap();
+                    let mut engine = GraphEngineV2::create(dir.path()).unwrap();
                     engine.add_nodes(make_nodes(size));
                     let edges = make_edges(size * 2, size);
                     (dir, engine, edges)
@@ -406,7 +407,7 @@ fn bench_compact(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let dir = TempDir::new().unwrap();
-                    let mut engine = GraphEngine::create(dir.path()).unwrap();
+                    let mut engine = GraphEngineV2::create(dir.path()).unwrap();
                     engine.add_nodes(make_nodes(size));
                     engine.add_edges(make_edges(size * 2, size), false);
                     // Flush once, then add more data to create delta entries

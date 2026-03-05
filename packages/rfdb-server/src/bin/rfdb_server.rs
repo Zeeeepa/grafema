@@ -1,4 +1,4 @@
-//! RFDB Server - Unix socket server for GraphEngine
+//! RFDB Server - Unix socket server for graph database
 //!
 //! Multi-database capable graph server. Supports multiple isolated databases
 //! per server instance, with ephemeral (in-memory) databases for testing.
@@ -38,7 +38,7 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 use futures_util::{StreamExt, SinkExt};
 
 // Import from library
-use rfdb::graph::{GraphEngine, GraphEngineV2, GraphStore};
+use rfdb::graph::{GraphEngineV2, GraphStore};
 use rfdb::storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, FieldType};
 use rfdb::datalog::{parse_program, parse_atom, parse_query, Evaluator, EvaluatorExplain, QueryResult};
 use rfdb::database_manager::{DatabaseManager, DatabaseInfo, AccessMode};
@@ -1310,11 +1310,7 @@ fn handle_request(
             // Get graph stats from current database (if any)
             let (node_count, edge_count, delta_size) = if let Some(ref db) = session.current_db {
                 let engine = db.engine.read().unwrap();
-                let ops = if let Some(v1) = engine.as_any().downcast_ref::<GraphEngine>() {
-                    v1.ops_since_flush as u64
-                } else {
-                    0 // v2 engine doesn't track ops_since_flush
-                };
+                let ops = 0u64;
                 (
                     engine.node_count() as u64,
                     engine.edge_count() as u64,
@@ -3825,7 +3821,7 @@ mod protocol_tests {
     }
 
     /// Non-ephemeral test: verifies segment edge deletion survives flush.
-    /// This exercises the deleted_segment_edge_keys path in GraphEngine.
+    /// This exercises the deleted_segment_edge_keys path in GraphStore.
     #[test]
     fn test_commit_batch_segment_edge_deletion() {
         let (_dir, manager) = setup_test_manager();
@@ -4255,69 +4251,20 @@ mod protocol_tests {
     }
 
     #[test]
-    fn test_snapshot_ops_on_v1_engine() {
+    fn test_v1_database_rejected() {
         let dir = tempdir().unwrap();
         let manager = Arc::new(DatabaseManager::new(dir.path().to_path_buf()));
 
-        // Create a v1 database by placing a nodes.bin marker
+        // Create a directory with nodes.bin to simulate legacy v1 database
         let v1_path = dir.path().join("default.rfdb");
         std::fs::create_dir_all(&v1_path).unwrap();
-        // Create a v1 engine and flush to produce nodes.bin
-        let mut v1_engine = GraphEngine::create(&v1_path).unwrap();
-        // Add a dummy node so flush writes nodes.bin
-        v1_engine.add_nodes(vec![NodeRecord {
-            id: 1,
-            node_type: Some("DUMMY".to_string()),
-            file_id: 0,
-            name_offset: 0,
-            version: "main".to_string(),
-            exported: false,
-            replaces: None,
-            deleted: false,
-            name: Some("dummy".to_string()),
-            file: Some("dummy.js".to_string()),
-            metadata: None,
-        semantic_id: None,
-        }]);
-        v1_engine.flush().unwrap();
-        // Drop v1_engine so the file is not locked
-        drop(v1_engine);
+        std::fs::write(v1_path.join("nodes.bin"), b"dummy").unwrap();
 
-        // Now create default from this path — detects nodes.bin and uses v1
-        manager.create_default_from_path(&v1_path).unwrap();
-
-        let mut session = ClientSession::new(1);
-        handle_request(&manager, &mut session, Request::OpenDatabase {
-            name: "default".to_string(),
-            mode: "rw".to_string(),
-        }, &None);
-
-        // ListSnapshots should return V2_REQUIRED error
-        let response = handle_request(&manager, &mut session, Request::ListSnapshots {
-            filter_tag: None,
-        }, &None);
-
-        match response {
-            Response::ErrorWithCode { error, code } => {
-                assert!(error.contains("v2 engine"));
-                assert_eq!(code, "V2_REQUIRED");
-            }
-            _ => panic!("Expected ErrorWithCode response, got {:?}", response),
-        }
-
-        // FindSnapshot should also return V2_REQUIRED error
-        let response = handle_request(&manager, &mut session, Request::FindSnapshot {
-            tag_key: "name".to_string(),
-            tag_value: "test".to_string(),
-        }, &None);
-
-        match response {
-            Response::ErrorWithCode { error, code } => {
-                assert!(error.contains("v2 engine"));
-                assert_eq!(code, "V2_REQUIRED");
-            }
-            _ => panic!("Expected ErrorWithCode response, got {:?}", response),
-        }
+        // create_default_from_path should reject v1 databases
+        let result = manager.create_default_from_path(&v1_path);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("Legacy v1 database"), "Error should mention legacy v1 database: {}", err_msg);
     }
 
     // ============================================================================

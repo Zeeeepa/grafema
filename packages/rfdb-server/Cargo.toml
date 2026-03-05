@@ -6,8 +6,7 @@ authors = ["Vadim Reshetnikov"]
 description = "RFDB (Rega Flow Database) — high-performance disk-backed graph engine for semantic code analysis"
 
 [lib]
-# Support both regular library and Node.js addon
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [dependencies]
 # Zero-copy memory mapping
@@ -52,10 +51,6 @@ signal-hook = "0.3"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
-# Node.js FFI (optional, enabled with "napi" feature)
-napi = { version = "2.16", optional = true, default-features = false, features = ["napi8"] }
-napi-derive = { version = "2.16", optional = true }
-
 # Rust source parsing for RustAnalyzer
 syn = { version = "2", features = ["full", "parsing", "visit"] }
 quote = "1"
@@ -64,7 +59,6 @@ regex-lite = "0.1"
 
 [features]
 default = []
-napi = ["dep:napi", "dep:napi-derive"]
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -77,10 +71,6 @@ name = "rfdb-server"
 path = "src/bin/rfdb_server.rs"
 
 [[bin]]
-name = "memory_profile"
-path = "src/bin/memory_profile.rs"
-
-[[bin]]
 name = "bench_report"
 path = "src/bin/bench_report.rs"
 
@@ -90,10 +80,6 @@ harness = false
 
 [[bench]]
 name = "neo4j_comparison"
-harness = false
-
-[[bench]]
-name = "v1_v2_comparison"
 harness = false
 
 [[bench]]

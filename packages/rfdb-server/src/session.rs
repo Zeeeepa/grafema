@@ -97,12 +97,10 @@ impl ClientSession {
 mod session_tests {
     use super::*;
     use crate::database_manager::Database;
-    use crate::graph::GraphEngine;
-    use tempfile::tempdir;
+    use crate::graph::GraphEngineV2;
 
     fn make_test_database(name: &str) -> Arc<Database> {
-        let dir = tempdir().unwrap();
-        let engine: Box<dyn crate::graph::GraphStore> = Box::new(GraphEngine::create(dir.path()).unwrap());
+        let engine: Box<dyn crate::graph::GraphStore> = Box::new(GraphEngineV2::create_ephemeral());
         Arc::new(Database::new(name.to_string(), engine, false))
     }
 
