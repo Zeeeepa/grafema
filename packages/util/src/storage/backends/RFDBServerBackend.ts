@@ -22,7 +22,7 @@ import { RFDBClient, type BatchHandle } from '@grafema/rfdb-client';
 import type { ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 
-import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery, DatalogExplainResult } from '@grafema/types';
+import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery, DatalogExplainResult, ServerStats } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
 import { startRfdbServer } from '../../utils/startRfdbServer.js';
 import { GRAFEMA_VERSION, getSchemaVersion } from '../../version.js';
@@ -651,6 +651,15 @@ export class RFDBServerBackend {
       nodesByType: nodeCounts,
       edgesByType: edgeCounts,
     };
+  }
+
+  /**
+   * Get full server stats including shard diagnostics.
+   * Uses the GetStats wire command which returns all metrics in one call.
+   */
+  async getServerStats(): Promise<ServerStats> {
+    if (!this.client) throw new Error('Not connected');
+    return this.client.getStats();
   }
 
   /**

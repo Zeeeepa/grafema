@@ -9,6 +9,7 @@ pub use id_gen::{compute_node_id, string_id_to_u128};
 
 use std::any::Any;
 use crate::storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl};
+use crate::storage_v2::ShardDiagnostics;
 use crate::error::Result;
 
 /// Основной trait для graph storage
@@ -108,6 +109,12 @@ pub trait GraphStore: Send + Sync {
 
     /// Declare metadata fields for secondary indexing
     fn declare_fields(&mut self, fields: Vec<FieldDecl>);
+
+    // === DIAGNOSTICS ===
+
+    /// Per-shard lifecycle diagnostics (compaction state, indexes, tombstones).
+    /// Default returns empty vec for engines that don't support sharding.
+    fn shard_diagnostics(&self) -> Vec<ShardDiagnostics> { vec![] }
 
     // === DOWNCAST SUPPORT ===
 

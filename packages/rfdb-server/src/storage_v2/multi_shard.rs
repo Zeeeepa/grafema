@@ -35,7 +35,7 @@ use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
 use crate::storage_v2::index::{build_inverted_indexes, GlobalIndex, IndexEntry, InvertedIndex};
 use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor};
 use crate::storage_v2::segment::{self, EdgeSegmentV2, NodeSegmentV2};
-use crate::storage_v2::shard::{Shard, TombstoneSet};
+use crate::storage_v2::shard::{Shard, ShardDiagnostics, TombstoneSet};
 use crate::storage_v2::shard_planner::ShardPlanner;
 use crate::storage_v2::types::{CommitDelta, EdgeRecordV2, NodeRecordV2, SegmentType, extract_file_context};
 
@@ -74,17 +74,9 @@ impl DatabaseConfig {
 
 // ── Shard Stats ────────────────────────────────────────────────────
 
-/// Per-shard statistics for monitoring.
-#[derive(Debug, Clone)]
-pub struct ShardStats {
-    pub shard_id: u16,
-    pub node_count: usize,
-    pub edge_count: usize,
-    pub node_segments: usize,
-    pub edge_segments: usize,
-    pub write_buffer_nodes: usize,
-    pub write_buffer_edges: usize,
-}
+/// Backward-compatible alias — old callers that used ShardStats
+/// now get the richer ShardDiagnostics struct (superset of old fields).
+pub type ShardStats = ShardDiagnostics;
 
 // ── Multi-Shard Store ──────────────────────────────────────────────
 
@@ -1353,24 +1345,18 @@ impl MultiShardStore {
     }
 
     /// Per-shard statistics for monitoring.
-    pub fn shard_stats(&self) -> Vec<ShardStats> {
+    /// Per-shard diagnostics for lifecycle visibility.
+    pub fn shard_diagnostics(&self) -> Vec<ShardDiagnostics> {
         self.shards
             .iter()
             .enumerate()
-            .map(|(i, shard)| {
-                let (node_segs, edge_segs) = shard.segment_count();
-                let (wb_nodes, wb_edges) = shard.write_buffer_size();
-                ShardStats {
-                    shard_id: i as u16,
-                    node_count: shard.node_count(),
-                    edge_count: shard.edge_count(),
-                    node_segments: node_segs,
-                    edge_segments: edge_segs,
-                    write_buffer_nodes: wb_nodes,
-                    write_buffer_edges: wb_edges,
-                }
-            })
+            .map(|(i, shard)| shard.diagnostics(i as u16))
             .collect()
+    }
+
+    /// Backward-compatible alias for `shard_diagnostics()`.
+    pub fn shard_stats(&self) -> Vec<ShardStats> {
+        self.shard_diagnostics()
     }
 }
 
@@ -1762,6 +1748,112 @@ mod tests {
 
         for stat in &stats {
             assert!(stat.shard_id < 4);
+        }
+    }
+
+    #[test]
+    fn test_shard_diagnostics_ephemeral() {
+        let mut store = MultiShardStore::ephemeral(2);
+
+        let nodes: Vec<NodeRecordV2> = (0..4)
+            .map(|i| make_node(
+                &format!("dir_{}/fn_{}", i, i),
+                "FUNCTION",
+                &format!("fn_{}", i),
+                &format!("dir_{}/file.js", i),
+            ))
+            .collect();
+        store.add_nodes(nodes);
+
+        let diags = store.shard_diagnostics();
+        assert_eq!(diags.len(), 2);
+
+        let total: usize = diags.iter().map(|d| d.node_count).sum();
+        assert_eq!(total, 4);
+
+        for d in &diags {
+            // Ephemeral, no compaction
+            assert!(!d.compacted);
+            assert_eq!(d.l0_node_segment_count, 0);
+            assert_eq!(d.l1_node_records, 0);
+            assert!(!d.has_l1_by_type);
+            assert!(!d.has_l1_by_file);
+            assert!(!d.has_l1_by_name);
+            assert_eq!(d.tombstone_node_count, 0);
+            assert_eq!(d.tombstone_edge_count, 0);
+        }
+    }
+
+    #[test]
+    fn test_shard_diagnostics_after_compaction() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("diag_compact.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let mut store = MultiShardStore::create(&db_path, 2).unwrap();
+        let mut manifest = ManifestStore::create(&db_path).unwrap();
+
+        // Flush 4 times to create enough L0 segments (threshold=4)
+        for batch in 0..4 {
+            let nodes: Vec<NodeRecordV2> = (0..3)
+                .map(|i| {
+                    let idx = batch * 3 + i;
+                    make_node(
+                        &format!("dir_{}/fn_{}", idx, idx),
+                        "FUNCTION",
+                        &format!("fn_{}", idx),
+                        &format!("dir_{}/file.js", idx),
+                    )
+                })
+                .collect();
+            store.add_nodes(nodes);
+            store.flush_all(&mut manifest).unwrap();
+        }
+
+        let config = CompactionConfig::default();
+        store.compact(&mut manifest, &config).unwrap();
+
+        let diags = store.shard_diagnostics();
+        let has_compacted = diags.iter().any(|d| d.compacted);
+        assert!(has_compacted, "at least one shard should be compacted");
+
+        for d in &diags {
+            if d.compacted {
+                assert!(d.l1_node_records > 0, "compacted shard should have L1 node records");
+                assert_eq!(d.l0_node_segment_count, 0, "L0 should be cleared after compaction");
+                assert!(d.has_l1_by_type, "compacted shard should have by_type index");
+            }
+        }
+    }
+
+    #[test]
+    fn test_shard_diagnostics_tombstones() {
+        let mut store = MultiShardStore::ephemeral(2);
+
+        let nodes: Vec<NodeRecordV2> = (0..6)
+            .map(|i| make_node(
+                &format!("dir_{}/fn_{}", i, i),
+                "FUNCTION",
+                &format!("fn_{}", i),
+                &format!("dir_{}/file.js", i),
+            ))
+            .collect();
+        let ids: Vec<u128> = nodes.iter().map(|n| n.id).collect();
+        store.add_nodes(nodes);
+
+        // Tombstone 2 nodes — set_tombstones broadcasts to all shards,
+        // so each shard gets both tombstone IDs.
+        let tombstone_ids: std::collections::HashSet<u128> = ids[..2].iter().copied().collect();
+        let tombstone_edges: std::collections::HashSet<(u128, u128, String)> = std::collections::HashSet::new();
+        store.set_tombstones(&tombstone_ids, &tombstone_edges);
+
+        let diags = store.shard_diagnostics();
+        // Each shard gets all tombstones (broadcast), so total = 2 * shard_count
+        let total_tombstones: usize = diags.iter().map(|d| d.tombstone_node_count).sum();
+        assert_eq!(total_tombstones, 2 * 2, "each shard gets all tombstone IDs");
+        // But each individual shard should have exactly 2
+        for d in &diags {
+            assert_eq!(d.tombstone_node_count, 2);
         }
     }
 

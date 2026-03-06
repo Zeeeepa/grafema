@@ -13,6 +13,7 @@ import type {
   AnalyzeProjectArgs,
   GetSchemaArgs,
 } from '../types.js';
+import type { ServerStats } from '@grafema/types';
 
 // === ANALYSIS HANDLERS ===
 
@@ -69,12 +70,42 @@ export async function handleGetStats(): Promise<ToolResult> {
   const nodesByType = await db.countNodesByType();
   const edgesByType = await db.countEdgesByType();
 
+  let shardSection = '';
+  if ('getServerStats' in db && typeof (db as Record<string, unknown>).getServerStats === 'function') {
+    try {
+      const stats = await (db as { getServerStats(): Promise<ServerStats> }).getServerStats();
+      if (stats.shardDiagnostics?.length > 0) {
+        shardSection = `\nShard Diagnostics (${stats.shardDiagnostics.length} shards):\n`;
+        for (const s of stats.shardDiagnostics) {
+          const parts = [
+            `nodes=${s.nodeCount}`,
+            `edges=${s.edgeCount}`,
+            `wb=${s.writeBufferNodes}/${s.writeBufferEdges}`,
+            s.compacted ? `compacted (L1: ${s.l1NodeRecords}n/${s.l1EdgeRecords}e)` : `L0: ${s.l0NodeSegmentCount}n/${s.l0EdgeSegmentCount}e segs`,
+          ];
+          if (s.tombstoneNodeCount > 0 || s.tombstoneEdgeCount > 0) {
+            parts.push(`tombstones=${s.tombstoneNodeCount}n/${s.tombstoneEdgeCount}e`);
+          }
+          const indexes = [s.hasL1ByType && 'type', s.hasL1ByFile && 'file', s.hasL1ByName && 'name'].filter(Boolean);
+          if (indexes.length > 0) {
+            parts.push(`indexes=[${indexes.join(',')}]`);
+          }
+          shardSection += `  shard ${s.shardId}: ${parts.join(', ')}\n`;
+        }
+        shardSection += `\nServer: uptime=${stats.uptimeSecs}s, queries=${stats.queryCount}, memory=${stats.memoryPercent.toFixed(1)}%`;
+      }
+    } catch {
+      // Server may not support getStats yet — skip diagnostics
+    }
+  }
+
   return textResult(
     `Graph Statistics:\n\n` +
       `Total nodes: ${nodeCount.toLocaleString()}\n` +
       `Total edges: ${edgeCount.toLocaleString()}\n\n` +
       `Nodes by type:\n${JSON.stringify(nodesByType, null, 2)}\n\n` +
-      `Edges by type:\n${JSON.stringify(edgesByType, null, 2)}`
+      `Edges by type:\n${JSON.stringify(edgesByType, null, 2)}` +
+      shardSection
   );
 }
 

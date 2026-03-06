@@ -98,6 +98,11 @@ impl InvertedIndex {
             .collect()
     }
 
+    /// Number of distinct keys in this index.
+    pub fn key_count(&self) -> usize {
+        self.lookup_entries.len()
+    }
+
     /// Total number of entries across all keys.
     pub fn entry_count(&self) -> usize {
         self.entries.len()

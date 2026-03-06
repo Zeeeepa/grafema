@@ -167,6 +167,7 @@ interface IRFDBWebSocketClientTest {
   edgeCount(): Promise<number>;
   countNodesByType(types?: string[] | null): Promise<Record<string, number>>;
   countEdgesByType(edgeTypes?: string[] | null): Promise<Record<string, number>>;
+  getStats(): Promise<any>;
   flush(): Promise<any>;
   compact(): Promise<any>;
   clear(): Promise<any>;
@@ -390,6 +391,7 @@ describe('RFDBWebSocketClient — Command Names (Contract)', () => {
     { method: 'edgeCount', cmd: 'edgeCount', args: [] },
     { method: 'countNodesByType', cmd: 'countNodesByType', args: [] },
     { method: 'countEdgesByType', cmd: 'countEdgesByType', args: [] },
+    { method: 'getStats', cmd: 'getStats', args: [] },
     { method: 'flush', cmd: 'flush', args: [] },
     { method: 'compact', cmd: 'compact', args: [] },
     { method: 'clear', cmd: 'clear', args: [] },
@@ -547,8 +549,8 @@ describe('RFDBWebSocketClient — Interface Compatibility (Contract)', () => {
       'isEndpoint', 'getNodeIdentifier',
       // Traversal (6)
       'neighbors', 'bfs', 'dfs', 'reachability', 'getOutgoingEdges', 'getIncomingEdges',
-      // Stats (4)
-      'nodeCount', 'edgeCount', 'countNodesByType', 'countEdgesByType',
+      // Stats (5)
+      'nodeCount', 'edgeCount', 'countNodesByType', 'countEdgesByType', 'getStats',
       // Control (2)
       'flush', 'compact',
       // Datalog (5)
@@ -561,8 +563,8 @@ describe('RFDBWebSocketClient — Interface Compatibility (Contract)', () => {
       'diffSnapshots', 'tagSnapshot', 'findSnapshot', 'listSnapshots',
     ];
 
-    // 4+7+8+2+6+4+2+5+5+7+4 = 54 unique method names in IRFDBClient
-    assert.strictEqual(requiredMethods.length, 54, 'Should require all 54 IRFDBClient methods');
+    // 4+7+8+2+6+5+2+5+5+7+4 = 55 unique method names in IRFDBClient
+    assert.strictEqual(requiredMethods.length, 55, 'Should require all 55 IRFDBClient methods');
     // Duplicate check
     const unique = new Set(requiredMethods);
     assert.strictEqual(unique.size, requiredMethods.length, 'No duplicate method names');

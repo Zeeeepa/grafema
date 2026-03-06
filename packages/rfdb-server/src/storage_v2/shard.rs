@@ -25,6 +25,42 @@ use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2, SegmentMeta, SegmentType};
 use crate::storage_v2::write_buffer::WriteBuffer;
 use crate::storage_v2::writer::{EdgeSegmentWriter, NodeSegmentWriter};
+use serde::Serialize;
+
+// ── Shard Diagnostics ────────────────────────────────────────────────
+
+/// Per-shard diagnostic info for lifecycle visibility.
+///
+/// Returned by `Shard::diagnostics()` and exposed via GetStats wire command.
+/// Covers write buffer, compaction state, tombstones, and index presence.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShardDiagnostics {
+    pub shard_id: u16,
+    // Counts
+    pub node_count: usize,
+    pub edge_count: usize,
+    // Write buffer
+    pub write_buffer_nodes: usize,
+    pub write_buffer_edges: usize,
+    // Compaction
+    pub compacted: bool,
+    pub l0_node_segment_count: usize,
+    pub l0_edge_segment_count: usize,
+    pub l1_node_records: usize,
+    pub l1_edge_records: usize,
+    // Tombstones
+    pub tombstone_node_count: usize,
+    pub tombstone_edge_count: usize,
+    // Indexes
+    pub has_l1_by_type: bool,
+    pub has_l1_by_file: bool,
+    pub has_l1_by_name: bool,
+    pub l1_by_type_keys: usize,
+    pub l1_by_file_keys: usize,
+    pub l1_by_name_keys: usize,
+    pub has_edge_type_index: bool,
+}
 
 // ── Tombstone Set ────────────────────────────────────────────────────
 
@@ -1923,6 +1959,34 @@ impl Shard {
     /// Write buffer size: (nodes, edges).
     pub fn write_buffer_size(&self) -> (usize, usize) {
         (self.write_buffer.node_count(), self.write_buffer.edge_count())
+    }
+
+    /// Collect full diagnostic snapshot of this shard's lifecycle state.
+    pub fn diagnostics(&self, shard_id: u16) -> ShardDiagnostics {
+        let (wb_nodes, wb_edges) = self.write_buffer_size();
+        let has_edge_type_index = self.edge_type_index.lock().unwrap().is_some();
+
+        ShardDiagnostics {
+            shard_id,
+            node_count: self.node_count(),
+            edge_count: self.edge_count(),
+            write_buffer_nodes: wb_nodes,
+            write_buffer_edges: wb_edges,
+            compacted: self.has_l1(),
+            l0_node_segment_count: self.l0_node_segment_count(),
+            l0_edge_segment_count: self.l0_edge_segment_count(),
+            l1_node_records: self.l1_node_segment.as_ref().map_or(0, |s| s.record_count()),
+            l1_edge_records: self.l1_edge_segment.as_ref().map_or(0, |s| s.record_count()),
+            tombstone_node_count: self.tombstones.node_count(),
+            tombstone_edge_count: self.tombstones.edge_count(),
+            has_l1_by_type: self.l1_by_type_index.is_some(),
+            has_l1_by_file: self.l1_by_file_index.is_some(),
+            has_l1_by_name: self.l1_by_name_index.is_some(),
+            l1_by_type_keys: self.l1_by_type_index.as_ref().map_or(0, |i| i.key_count()),
+            l1_by_file_keys: self.l1_by_file_index.as_ref().map_or(0, |i| i.key_count()),
+            l1_by_name_keys: self.l1_by_name_index.as_ref().map_or(0, |i| i.key_count()),
+            has_edge_type_index,
+        }
     }
 
     /// Check if write buffer exceeds the given adaptive limits.

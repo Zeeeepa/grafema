@@ -475,6 +475,10 @@ pub enum Response {
         // Uptime
         #[serde(rename = "uptimeSecs")]
         uptime_secs: u64,
+
+        // Per-shard diagnostics
+        #[serde(rename = "shardDiagnostics")]
+        shard_diagnostics: Vec<WireShardDiagnostics>,
     },
 }
 
@@ -697,6 +701,31 @@ pub struct WireSnapshotDiff {
 pub struct WireManifestStats {
     pub total_nodes: u64,
     pub total_edges: u64,
+}
+
+/// Per-shard lifecycle diagnostics for wire protocol
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireShardDiagnostics {
+    pub shard_id: u16,
+    pub node_count: usize,
+    pub edge_count: usize,
+    pub write_buffer_nodes: usize,
+    pub write_buffer_edges: usize,
+    pub compacted: bool,
+    pub l0_node_segment_count: usize,
+    pub l0_edge_segment_count: usize,
+    pub l1_node_records: usize,
+    pub l1_edge_records: usize,
+    pub tombstone_node_count: usize,
+    pub tombstone_edge_count: usize,
+    pub has_l1_by_type: bool,
+    pub has_l1_by_file: bool,
+    pub has_l1_by_name: bool,
+    pub l1_by_type_keys: usize,
+    pub l1_by_file_keys: usize,
+    pub l1_by_name_keys: usize,
+    pub has_edge_type_index: bool,
 }
 
 // ============================================================================
@@ -1335,17 +1364,42 @@ fn handle_request_with_cancel(
             };
 
             // Get graph stats from current database (if any)
-            let (node_count, edge_count, delta_size) = if let Some(ref db) = session.current_db {
+            let (node_count, edge_count, delta_size, shard_diags) = if let Some(ref db) = session.current_db {
                 let engine = db.engine.read().unwrap();
                 let ops = 0u64;
+                let diags: Vec<WireShardDiagnostics> = engine.shard_diagnostics()
+                    .into_iter()
+                    .map(|d| WireShardDiagnostics {
+                        shard_id: d.shard_id,
+                        node_count: d.node_count,
+                        edge_count: d.edge_count,
+                        write_buffer_nodes: d.write_buffer_nodes,
+                        write_buffer_edges: d.write_buffer_edges,
+                        compacted: d.compacted,
+                        l0_node_segment_count: d.l0_node_segment_count,
+                        l0_edge_segment_count: d.l0_edge_segment_count,
+                        l1_node_records: d.l1_node_records,
+                        l1_edge_records: d.l1_edge_records,
+                        tombstone_node_count: d.tombstone_node_count,
+                        tombstone_edge_count: d.tombstone_edge_count,
+                        has_l1_by_type: d.has_l1_by_type,
+                        has_l1_by_file: d.has_l1_by_file,
+                        has_l1_by_name: d.has_l1_by_name,
+                        l1_by_type_keys: d.l1_by_type_keys,
+                        l1_by_file_keys: d.l1_by_file_keys,
+                        l1_by_name_keys: d.l1_by_name_keys,
+                        has_edge_type_index: d.has_edge_type_index,
+                    })
+                    .collect();
                 (
                     engine.node_count() as u64,
                     engine.edge_count() as u64,
                     ops,
+                    diags,
                 )
             } else {
                 // No database selected - return zeros
-                (0, 0, 0)
+                (0, 0, 0, vec![])
             };
 
             // Get system memory
@@ -1375,6 +1429,7 @@ fn handle_request_with_cancel(
                 timed_out_count: metrics_snapshot.timed_out_count,
                 cancelled_count: metrics_snapshot.cancelled_count,
                 uptime_secs: metrics_snapshot.uptime_secs,
+                shard_diagnostics: shard_diags,
             }
         }
 
@@ -3168,13 +3223,14 @@ mod protocol_tests {
 
         match response {
             Response::Stats {
-                query_count, slow_query_count, node_count, edge_count, ..
+                query_count, slow_query_count, node_count, edge_count, shard_diagnostics, ..
             } => {
                 assert_eq!(query_count, 2);
                 assert_eq!(slow_query_count, 1);
                 // No database selected
                 assert_eq!(node_count, 0);
                 assert_eq!(edge_count, 0);
+                assert!(shard_diagnostics.is_empty(), "no db = empty shard_diagnostics");
             }
             _ => panic!("Expected Stats response"),
         }
@@ -3208,8 +3264,17 @@ mod protocol_tests {
         let response = handle_request(&manager, &mut session, Request::GetStats, &metrics);
 
         match response {
-            Response::Stats { node_count, .. } => {
+            Response::Stats { node_count, shard_diagnostics, .. } => {
                 assert_eq!(node_count, 1);
+                assert!(!shard_diagnostics.is_empty(), "should have shard diagnostics");
+                let total: usize = shard_diagnostics.iter().map(|s| s.node_count).sum();
+                assert_eq!(total, 1, "total nodes across shards");
+                // No compaction yet
+                for s in &shard_diagnostics {
+                    assert!(!s.compacted);
+                    assert_eq!(s.l1_node_records, 0);
+                    assert!(!s.has_l1_by_type);
+                }
             }
             _ => panic!("Expected Stats response"),
         }

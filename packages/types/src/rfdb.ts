@@ -36,6 +36,7 @@ export type RFDBCommand =
   | 'edgeCount'
   | 'countNodesByType'
   | 'countEdgesByType'
+  | 'getStats'
   // Control
   | 'flush'
   | 'compact'
@@ -484,6 +485,53 @@ export interface ListSnapshotsResponse extends RFDBResponse {
   snapshots: SnapshotInfo[];
 }
 
+// === SERVER STATS ===
+
+/** Per-shard lifecycle diagnostics from GetStats. */
+export interface ShardDiagnostics {
+  shardId: number;
+  nodeCount: number;
+  edgeCount: number;
+  writeBufferNodes: number;
+  writeBufferEdges: number;
+  compacted: boolean;
+  l0NodeSegmentCount: number;
+  l0EdgeSegmentCount: number;
+  l1NodeRecords: number;
+  l1EdgeRecords: number;
+  tombstoneNodeCount: number;
+  tombstoneEdgeCount: number;
+  hasL1ByType: boolean;
+  hasL1ByFile: boolean;
+  hasL1ByName: boolean;
+  l1ByTypeKeys: number;
+  l1ByFileKeys: number;
+  l1ByNameKeys: number;
+  hasEdgeTypeIndex: boolean;
+}
+
+/** Full server statistics from GetStats wire command. */
+export interface ServerStats {
+  nodeCount: number;
+  edgeCount: number;
+  deltaSize: number;
+  memoryPercent: number;
+  queryCount: number;
+  slowQueryCount: number;
+  queryP50Ms: number;
+  queryP95Ms: number;
+  queryP99Ms: number;
+  flushCount: number;
+  lastFlushMs: number;
+  lastFlushNodes: number;
+  lastFlushEdges: number;
+  topSlowQueries: Array<{ operation: string; durationMs: number; timestampMs: number }>;
+  timedOutCount: number;
+  cancelledCount: number;
+  uptimeSecs: number;
+  shardDiagnostics: ShardDiagnostics[];
+}
+
 // === CLIENT INTERFACE ===
 export interface IRFDBClient {
   readonly socketPath: string;
@@ -531,6 +579,7 @@ export interface IRFDBClient {
   edgeCount(): Promise<number>;
   countNodesByType(types?: NodeType[] | null): Promise<Record<string, number>>;
   countEdgesByType(edgeTypes?: EdgeType[] | null): Promise<Record<string, number>>;
+  getStats(): Promise<ServerStats>;
 
   // Control
   flush(): Promise<RFDBResponse>;

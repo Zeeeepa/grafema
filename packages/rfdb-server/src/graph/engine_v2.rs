@@ -586,6 +586,10 @@ impl GraphStore for GraphEngineV2 {
         self.declared_fields = fields;
     }
 
+    fn shard_diagnostics(&self) -> Vec<crate::storage_v2::ShardDiagnostics> {
+        self.store.shard_diagnostics()
+    }
+
     fn as_any(&self) -> &dyn std::any::Any { self }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
 }

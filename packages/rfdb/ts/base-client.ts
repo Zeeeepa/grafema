@@ -24,6 +24,7 @@ import type {
   OpenDatabaseResponse,
   ListDatabasesResponse,
   CurrentDatabaseResponse,
+  ServerStats,
   SnapshotRef,
   SnapshotDiff,
   SnapshotInfo,
@@ -290,6 +291,11 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
   async countEdgesByType(edgeTypes: EdgeType[] | null = null): Promise<Record<string, number>> {
     const response = await this._send('countEdgesByType', { edgeTypes });
     return (response as { counts?: Record<string, number> }).counts || {};
+  }
+
+  async getStats(): Promise<ServerStats> {
+    const response = await this._send('getStats');
+    return response as unknown as ServerStats;
   }
 
   // ===========================================================================
