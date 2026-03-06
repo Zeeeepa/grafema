@@ -581,7 +581,60 @@ impl<'a> Evaluator<'a> {
                 }
                 results
             }
-            _ => vec![],
+            // node(_, "type") - count/check all nodes of type (wildcard id)
+            (Term::Wildcard, Term::Const(node_type)) => {
+                self.engine
+                    .find_by_type(node_type)
+                    .into_iter()
+                    .map(|_| Bindings::new())
+                    .collect()
+            }
+            // node("id", _) - check if node exists (wildcard type)
+            (Term::Const(id_str), Term::Wildcard) => {
+                if let Ok(id) = id_str.parse::<u128>() {
+                    if self.engine.get_node(id).is_some() {
+                        return vec![Bindings::new()];
+                    }
+                }
+                vec![]
+            }
+            // node(_, _) - enumerate all nodes (both wildcards)
+            (Term::Wildcard, Term::Wildcard) => {
+                let type_counts = self.engine.count_nodes_by_type(None);
+                let mut results = vec![];
+                for node_type in type_counts.keys() {
+                    for _ in self.engine.find_by_type(node_type) {
+                        results.push(Bindings::new());
+                    }
+                }
+                results
+            }
+            // node(X, _) - enumerate all nodes, bind id only
+            (Term::Var(id_var), Term::Wildcard) => {
+                let type_counts = self.engine.count_nodes_by_type(None);
+                let mut results = vec![];
+                for node_type in type_counts.keys() {
+                    for id in self.engine.find_by_type(node_type) {
+                        let mut b = Bindings::new();
+                        b.set(id_var, Value::Id(id));
+                        results.push(b);
+                    }
+                }
+                results
+            }
+            // node(_, Y) - enumerate all nodes, bind type only
+            (Term::Wildcard, Term::Var(type_var)) => {
+                let type_counts = self.engine.count_nodes_by_type(None);
+                let mut results = vec![];
+                for node_type in type_counts.keys() {
+                    for _ in self.engine.find_by_type(node_type) {
+                        let mut b = Bindings::new();
+                        b.set(type_var, Value::Str(node_type.clone()));
+                        results.push(b);
+                    }
+                }
+                results
+            }
         }
     }
 
@@ -692,7 +745,53 @@ impl<'a> Evaluator<'a> {
                     })
                     .collect()
             }
-            _ => vec![],
+            Term::Wildcard => {
+                // Wildcard src: enumerate all edges, don't bind src
+                let type_filter: Option<&str> = type_term.and_then(|t| match t {
+                    Term::Const(s) => Some(s.as_str()),
+                    _ => None,
+                });
+
+                let edges = if let Some(edge_type) = type_filter {
+                    self.engine.get_edges_by_type(edge_type)
+                } else {
+                    self.engine.get_all_edges()
+                };
+
+                let dst_filter: Option<u128> = match dst_term {
+                    Term::Const(s) => s.parse::<u128>().ok(),
+                    _ => None,
+                };
+
+                edges
+                    .into_iter()
+                    .filter(|e| {
+                        if let Some(filter_dst) = dst_filter {
+                            if e.dst != filter_dst {
+                                return false;
+                            }
+                        }
+                        true
+                    })
+                    .map(|e| {
+                        let mut b = Bindings::new();
+
+                        // Bind destination if variable
+                        if let Term::Var(var) = dst_term {
+                            b.set(var, Value::Id(e.dst));
+                        }
+
+                        // Bind edge type if variable
+                        if let Some(Term::Var(var)) = type_term {
+                            if let Some(etype) = e.edge_type {
+                                b.set(var, Value::Str(etype));
+                            }
+                        }
+
+                        b
+                    })
+                    .collect()
+            }
         }
     }
 
@@ -795,7 +894,59 @@ impl<'a> Evaluator<'a> {
                     })
                     .collect()
             }
-            _ => vec![],
+            Term::Wildcard => {
+                // Wildcard dst: enumerate all edges, don't bind dst
+                let type_filter: Option<&str> = type_term.and_then(|t| match t {
+                    Term::Const(s) => Some(s.as_str()),
+                    _ => None,
+                });
+
+                let edges = if let Some(edge_type) = type_filter {
+                    self.engine.get_edges_by_type(edge_type)
+                } else {
+                    self.engine.get_all_edges()
+                };
+
+                let src_filter: Option<u128> = match src_term {
+                    Term::Const(s) => s.parse::<u128>().ok(),
+                    _ => None,
+                };
+
+                edges
+                    .into_iter()
+                    .filter(|e| {
+                        if let Some(filter_src) = src_filter {
+                            if e.src != filter_src {
+                                return false;
+                            }
+                        }
+                        true
+                    })
+                    .filter_map(|e| {
+                        let mut b = Bindings::new();
+
+                        // Bind src
+                        match src_term {
+                            Term::Var(var) => b.set(var, Value::Id(e.src)),
+                            Term::Const(s) => {
+                                if s.parse::<u128>().ok() != Some(e.src) {
+                                    return None;
+                                }
+                            }
+                            Term::Wildcard => {}
+                        }
+
+                        // Bind edge type if variable
+                        if let Some(Term::Var(var)) = type_term {
+                            if let Some(etype) = e.edge_type {
+                                b.set(var, Value::Str(etype));
+                            }
+                        }
+
+                        Some(b)
+                    })
+                    .collect()
+            }
         }
     }
 

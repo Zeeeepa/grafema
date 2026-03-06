@@ -690,6 +690,176 @@ mod eval_tests {
         assert_eq!(results.len(), 0);
     }
 
+    // ====================================================================
+    // Wildcard tests — Term::Wildcard in edge/incoming/node predicates
+    // ====================================================================
+
+    #[test]
+    fn test_eval_edge_wildcard_src() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // edge(_, Y, "CALLS") — wildcard src, should return all CALLS edges with Y bound to dst
+        let query = Atom::new("edge", vec![
+            Term::wildcard(),
+            Term::var("Y"),
+            Term::constant("CALLS"),
+        ]);
+
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 2); // 1->4 and 4->2
+        let mut dsts: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("Y").and_then(|v| v.as_id()))
+            .collect();
+        dsts.sort();
+        assert_eq!(dsts, vec![2, 4]);
+    }
+
+    #[test]
+    fn test_eval_edge_wildcard_src_and_dst() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // edge(_, _, "CALLS") — wildcard both src and dst, should return count of all CALLS edges
+        let query = Atom::new("edge", vec![
+            Term::wildcard(),
+            Term::wildcard(),
+            Term::constant("CALLS"),
+        ]);
+
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 2); // two CALLS edges in graph
+    }
+
+    #[test]
+    fn test_eval_incoming_wildcard_dst() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // incoming(_, X, "CALLS") — wildcard dst, should return all CALLS edges with X bound to src
+        let query = Atom::new("incoming", vec![
+            Term::wildcard(),
+            Term::var("X"),
+            Term::constant("CALLS"),
+        ]);
+
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 2); // 1->4 and 4->2
+        let mut srcs: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        srcs.sort();
+        assert_eq!(srcs, vec![1, 4]);
+    }
+
+    #[test]
+    fn test_eval_edge_wildcard_negation() {
+        // The original diagnostic query: violation(X) :- node(X, "FUNCTION"), \+ edge(_, X, "CONTAINS").
+        // Setup: graph with FUNCTION nodes, some with incoming CONTAINS, some without
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 100,
+                node_type: Some("MODULE".to_string()),
+                name: Some("mod".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 101,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("declared".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 102,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("arrow".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+        ]);
+
+        // Only node 101 has CONTAINS edge from module
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 100,
+                dst: 101,
+                edge_type: Some("CONTAINS".to_string()),
+                version: "main".into(),
+                metadata: None,
+                deleted: false,
+            },
+        ], false);
+
+        let mut evaluator = Evaluator::new(&engine);
+
+        let rule = parse_rule(
+            r#"violation(X) :- node(X, "FUNCTION"), \+ edge(_, X, "CONTAINS")."#
+        ).unwrap();
+        evaluator.add_rule(rule);
+
+        let query = parse_atom("violation(X)").unwrap();
+        let results = evaluator.query(&query).unwrap();
+
+        // Only node 102 (arrow) should violate — it has no incoming CONTAINS
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Id(102)));
+    }
+
+    #[test]
+    fn test_eval_node_wildcard_type() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // node("1", _) — check if node 1 exists (wildcard type)
+        let query = Atom::new("node", vec![
+            Term::constant("1"),
+            Term::wildcard(),
+        ]);
+
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_eval_node_wildcard_id() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // node(_, "FUNCTION") — count FUNCTION nodes (wildcard id)
+        let query = Atom::new("node", vec![
+            Term::wildcard(),
+            Term::constant("FUNCTION"),
+        ]);
+
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1); // only node 4 is FUNCTION
+    }
+
     #[test]
     fn test_guarantee_all_variables_assigned() {
         // Setup: Create a graph with VARIABLE nodes, some with ASSIGNED_FROM, some without

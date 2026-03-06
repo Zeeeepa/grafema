@@ -143,6 +143,7 @@ async fn main() -> Result<()> {
             for result in &mut results {
                 if let Some(ref mut analysis) = result.analysis {
                     analysis.relativize_paths(&root_str);
+                    analysis.ensure_function_contains_edges();
                 }
             }
 

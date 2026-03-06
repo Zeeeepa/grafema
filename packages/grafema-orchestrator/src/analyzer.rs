@@ -14,7 +14,7 @@
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -111,6 +111,35 @@ impl FileAnalysis {
         for export in &mut self.exports {
             export.node_id = strip(&export.node_id);
         }
+    }
+
+    /// Ensure every FUNCTION node has at least one incoming CONTAINS edge.
+    ///
+    /// The JS/TS analyzer only emits MODULE→CONTAINS→FUNCTION for `FunctionDeclaration`
+    /// AST nodes. Expression functions (`const f = function() {}`) and arrow functions
+    /// (`const f = () => {}`) are missing these edges. This post-processing step adds
+    /// MODULE→CONTAINS edges for any FUNCTION node not already a CONTAINS destination.
+    pub fn ensure_function_contains_edges(&mut self) {
+        let contains_dsts: HashSet<String> = self
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == "CONTAINS")
+            .map(|e| e.dst.clone())
+            .collect();
+
+        let new_edges: Vec<GraphEdge> = self
+            .nodes
+            .iter()
+            .filter(|n| n.node_type == "FUNCTION" && !contains_dsts.contains(&n.id))
+            .map(|n| GraphEdge {
+                src: self.module_id.clone(),
+                dst: n.id.clone(),
+                edge_type: "CONTAINS".to_string(),
+                metadata: HashMap::new(),
+            })
+            .collect();
+
+        self.edges.extend(new_edges);
     }
 }
 
@@ -1947,5 +1976,119 @@ mod tests {
         // Should serialize node_type as "type" due to #[serde(rename = "type")]
         assert_eq!(value["type"], "FUNCTION");
         assert!(value.get("node_type").is_none());
+    }
+
+    #[test]
+    fn ensure_function_contains_adds_missing_edges() {
+        let mut analysis = FileAnalysis {
+            file: "src/app.js".to_string(),
+            module_id: "MODULE#src/app.js".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: "FUNCTION#src/app.js:declared".to_string(),
+                    node_type: "FUNCTION".to_string(),
+                    name: "declared".to_string(),
+                    file: "src/app.js".to_string(),
+                    line: 1, column: 0, end_line: 5, end_column: 1,
+                    exported: false,
+                    metadata: HashMap::new(),
+                },
+                GraphNode {
+                    id: "FUNCTION#src/app.js:arrow".to_string(),
+                    node_type: "FUNCTION".to_string(),
+                    name: "arrow".to_string(),
+                    file: "src/app.js".to_string(),
+                    line: 7, column: 0, end_line: 9, end_column: 1,
+                    exported: false,
+                    metadata: HashMap::new(),
+                },
+                GraphNode {
+                    id: "VARIABLE#src/app.js:x".to_string(),
+                    node_type: "VARIABLE".to_string(),
+                    name: "x".to_string(),
+                    file: "src/app.js".to_string(),
+                    line: 11, column: 0, end_line: 11, end_column: 10,
+                    exported: false,
+                    metadata: HashMap::new(),
+                },
+            ],
+            edges: vec![
+                // Only "declared" has CONTAINS already
+                GraphEdge {
+                    src: "MODULE#src/app.js".to_string(),
+                    dst: "FUNCTION#src/app.js:declared".to_string(),
+                    edge_type: "CONTAINS".to_string(),
+                    metadata: HashMap::new(),
+                },
+            ],
+            exports: vec![],
+        };
+
+        analysis.ensure_function_contains_edges();
+
+        // Should have added CONTAINS for "arrow" but not duplicate for "declared"
+        let contains_edges: Vec<_> = analysis.edges.iter()
+            .filter(|e| e.edge_type == "CONTAINS")
+            .collect();
+        assert_eq!(contains_edges.len(), 2);
+
+        // Verify the new edge
+        let arrow_contains = contains_edges.iter()
+            .find(|e| e.dst == "FUNCTION#src/app.js:arrow")
+            .expect("arrow should have CONTAINS edge");
+        assert_eq!(arrow_contains.src, "MODULE#src/app.js");
+
+        // VARIABLE should NOT get CONTAINS edge
+        assert!(contains_edges.iter().all(|e| !e.dst.contains("VARIABLE")));
+    }
+
+    #[test]
+    fn ensure_function_contains_no_duplicates() {
+        let mut analysis = FileAnalysis {
+            file: "src/app.js".to_string(),
+            module_id: "MODULE#src/app.js".to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: "FUNCTION#src/app.js:foo".to_string(),
+                    node_type: "FUNCTION".to_string(),
+                    name: "foo".to_string(),
+                    file: "src/app.js".to_string(),
+                    line: 1, column: 0, end_line: 5, end_column: 1,
+                    exported: false,
+                    metadata: HashMap::new(),
+                },
+            ],
+            edges: vec![
+                GraphEdge {
+                    src: "MODULE#src/app.js".to_string(),
+                    dst: "FUNCTION#src/app.js:foo".to_string(),
+                    edge_type: "CONTAINS".to_string(),
+                    metadata: HashMap::new(),
+                },
+            ],
+            exports: vec![],
+        };
+
+        analysis.ensure_function_contains_edges();
+
+        // No new edges added — already has CONTAINS
+        let contains_count = analysis.edges.iter()
+            .filter(|e| e.edge_type == "CONTAINS")
+            .count();
+        assert_eq!(contains_count, 1);
+    }
+
+    #[test]
+    fn ensure_function_contains_empty_analysis() {
+        let mut analysis = FileAnalysis {
+            file: "empty.js".to_string(),
+            module_id: "MODULE#empty.js".to_string(),
+            nodes: vec![],
+            edges: vec![],
+            exports: vec![],
+        };
+
+        analysis.ensure_function_contains_edges();
+        assert!(analysis.edges.is_empty());
     }
 }
