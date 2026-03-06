@@ -18,6 +18,14 @@ Grafema is NOT competing with TypeScript or static type checkers. It's for codeb
 
 **AI-first tool:** Every function must be documented for LLM-based agents. Documentation should explain when and why to use each capability. UX is designed for agents, not just humans.
 
+**AI Agent Stories:** `AI-AGENT-STORIES.md` — user stories written and maintained by the AI agent (Claude) based on real pain points during development sessions. Claude owns this file's content: pain points, acceptance criteria, status assessments. This is the acceptance test for dogfooding — every ❌ BROKEN story is a product gap.
+
+**Story update triggers (Claude's responsibility):**
+- **After using Grafema MCP tools** — update story statuses based on what worked / broke
+- **After a blocker is resolved** (REG-618, RFD-44, etc.) — re-test affected stories, update status
+- **When encountering a new pain point** — add a new user story
+- **On session start if working on Grafema tasks** — quick `get_stats` check, update US-01 status
+
 ## Architecture
 
 - **Plugin-based, modular architecture**
