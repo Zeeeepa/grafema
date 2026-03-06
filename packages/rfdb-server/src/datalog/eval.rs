@@ -317,14 +317,17 @@ impl<'a> Evaluator<'a> {
                     .collect()
             }
             Term::Var(src_var) => {
-                // Enumerate all edges when source is unbound
-                let all_edges = self.engine.get_all_edges();
-
-                // Get edge type filter if constant
+                // Use edge-type index when type is a constant
                 let type_filter: Option<&str> = type_term.and_then(|t| match t {
                     Term::Const(s) => Some(s.as_str()),
                     _ => None,
                 });
+
+                let edges = if let Some(edge_type) = type_filter {
+                    self.engine.get_edges_by_type(edge_type)
+                } else {
+                    self.engine.get_all_edges()
+                };
 
                 // Get destination filter if constant
                 let dst_filter: Option<u128> = match dst_term {
@@ -332,16 +335,9 @@ impl<'a> Evaluator<'a> {
                     _ => None,
                 };
 
-                all_edges
+                edges
                     .into_iter()
                     .filter(|e| {
-                        // Filter by edge type if specified
-                        if let Some(filter_type) = type_filter {
-                            if e.edge_type.as_deref() != Some(filter_type) {
-                                return false;
-                            }
-                        }
-                        // Filter by destination if specified
                         if let Some(filter_dst) = dst_filter {
                             if e.dst != filter_dst {
                                 return false;
@@ -431,9 +427,48 @@ impl<'a> Evaluator<'a> {
                     })
                     .collect()
             }
-            Term::Var(_var) => {
-                // Would need to enumerate all edges - expensive
-                vec![]
+            Term::Var(dst_var) => {
+                // Use edge-type index when type is a constant
+                let type_filter: Option<&str> = type_term.and_then(|t| match t {
+                    Term::Const(s) => Some(s.as_str()),
+                    _ => None,
+                });
+
+                let edges = if let Some(edge_type) = type_filter {
+                    self.engine.get_edges_by_type(edge_type)
+                } else {
+                    return vec![];
+                };
+
+                edges
+                    .into_iter()
+                    .filter_map(|e| {
+                        let mut b = Bindings::new();
+
+                        // Bind dst variable
+                        b.set(dst_var, Value::Id(e.dst));
+
+                        // Bind src
+                        match src_term {
+                            Term::Var(var) => b.set(var, Value::Id(e.src)),
+                            Term::Const(s) => {
+                                if s.parse::<u128>().ok() != Some(e.src) {
+                                    return None;
+                                }
+                            }
+                            Term::Wildcard => {}
+                        }
+
+                        // Bind edge type if variable
+                        if let Some(Term::Var(var)) = type_term {
+                            if let Some(etype) = e.edge_type {
+                                b.set(var, Value::Str(etype));
+                            }
+                        }
+
+                        Some(b)
+                    })
+                    .collect()
             }
             _ => vec![],
         }

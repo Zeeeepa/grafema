@@ -3579,3 +3579,126 @@ mod attr_reverse_lookup_tests {
         assert!(!result.explain_steps.is_empty());
     }
 }
+
+// ============================================================================
+// Phase 8: Edge-type index tests (RFD-44)
+// ============================================================================
+
+mod edge_type_index_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::{NodeRecord, EdgeRecord};
+    use crate::datalog::eval::Evaluator;
+    use crate::datalog::eval_explain::EvaluatorExplain;
+
+    fn setup_edge_type_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("caller".to_string()),
+                file: Some("a.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("callee".to_string()),
+                file: Some("b.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            },
+            NodeRecord {
+                id: 3,
+                node_type: Some("MODULE".to_string()),
+                name: Some("mod_a".to_string()),
+                file: Some("a.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            },
+        ]);
+
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 1, dst: 2,
+                edge_type: Some("CALLS".to_string()),
+                version: "main".into(), metadata: None, deleted: false,
+            },
+            EdgeRecord {
+                src: 3, dst: 1,
+                edge_type: Some("CONTAINS".to_string()),
+                version: "main".into(), metadata: None, deleted: false,
+            },
+        ], false);
+
+        engine
+    }
+
+    #[test]
+    fn test_edge_unbound_src_const_type_uses_edges_by_type() {
+        let engine = setup_edge_type_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, false);
+
+        // edge(X, Y, "CALLS") — src unbound, type constant → should use index
+        let literals = parse_query(r#"edge(X, Y, "CALLS")"#).unwrap();
+        let result = evaluator.eval_query(&literals).unwrap();
+
+        assert_eq!(result.bindings.len(), 1);
+        assert_eq!(result.bindings[0].get("X"), Some(&"1".to_string()));
+        assert_eq!(result.bindings[0].get("Y"), Some(&"2".to_string()));
+
+        assert!(
+            result.stats.edges_by_type_calls > 0,
+            "expected edges_by_type_calls > 0, got {}",
+            result.stats.edges_by_type_calls
+        );
+        assert_eq!(
+            result.stats.all_edges_calls, 0,
+            "expected all_edges_calls == 0 (index should avoid full scan)"
+        );
+    }
+
+    #[test]
+    fn test_incoming_unbound_dst_const_type() {
+        let engine = setup_edge_type_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // incoming(X, Y, "CALLS") — dst unbound, type constant → should return results
+        let query = Atom::new("incoming", vec![
+            Term::var("X"),
+            Term::var("Y"),
+            Term::constant("CALLS"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        // Edge 1->2 CALLS: incoming to node 2, from node 1
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Id(2))); // dst
+        assert_eq!(results[0].get("Y"), Some(&Value::Id(1))); // src
+    }
+
+    #[test]
+    fn test_incoming_unbound_dst_var_type_still_empty() {
+        let engine = setup_edge_type_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // incoming(X, Y, T) — both dst and type unbound → degenerate, returns empty
+        let query = Atom::new("incoming", vec![
+            Term::var("X"),
+            Term::var("Y"),
+            Term::var("T"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert!(results.is_empty(), "incoming with all-unbound should return empty");
+    }
+}
