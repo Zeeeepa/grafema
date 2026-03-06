@@ -940,7 +940,11 @@ impl<'a> EvaluatorExplain<'a> {
 
         for rule in &rules {
             self.stats.rule_evaluations += 1;
-            let body_results = match self.eval_rule_body(rule) {
+
+            // Push down bound args from query into rule body.
+            let initial = self.bind_from_query(&rule, atom);
+
+            let body_results = match self.eval_rule_body_with(&rule, initial) {
                 Ok(b) => b,
                 Err(e) => {
                     eprintln!("datalog eval_derived: reorder error for rule {:?}: {}", rule, e);
@@ -949,7 +953,7 @@ impl<'a> EvaluatorExplain<'a> {
             };
 
             for bindings in body_results {
-                if let Some(head_bindings) = self.project_to_head(rule, atom, &bindings) {
+                if let Some(head_bindings) = self.project_to_head(&rule, atom, &bindings) {
                     results.push(head_bindings);
                 }
             }
@@ -958,12 +962,28 @@ impl<'a> EvaluatorExplain<'a> {
         results
     }
 
-    /// Evaluate rule body
+    /// Map bound arguments from the query atom into rule head variables.
+    fn bind_from_query(&self, rule: &Rule, query: &Atom) -> Bindings {
+        let head = rule.head();
+        let mut bindings = Bindings::new();
+
+        for (i, head_term) in head.args().iter().enumerate() {
+            if let Term::Var(var) = head_term {
+                if let Some(Term::Const(value)) = query.args().get(i) {
+                    bindings.set(var, Value::from_term_const(value));
+                }
+            }
+        }
+
+        bindings
+    }
+
+    /// Evaluate rule body with initial bindings.
     ///
     /// Reorders body literals before evaluation to ensure correct variable binding order.
-    fn eval_rule_body(&mut self, rule: &Rule) -> Result<Vec<Bindings>, String> {
+    fn eval_rule_body_with(&mut self, rule: &Rule, initial: Bindings) -> Result<Vec<Bindings>, String> {
         let ordered = reorder_literals(rule.body())?;
-        let mut current = vec![Bindings::new()];
+        let mut current = vec![initial];
 
         for literal in &ordered {
             let mut next = vec![];

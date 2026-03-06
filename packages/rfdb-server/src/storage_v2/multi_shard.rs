@@ -530,6 +530,25 @@ impl MultiShardStore {
     }
 }
 
+// ── Type Counts ───────────────────────────────────────────────────
+
+impl MultiShardStore {
+    /// Count nodes by type across all shards without loading full records.
+    ///
+    /// Fan-out to all shards and merge counts.
+    /// Since nodes are unique per shard (no cross-shard duplicates),
+    /// simple addition is correct.
+    pub fn count_by_type(&self) -> HashMap<String, usize> {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for shard in &self.shards {
+            for (node_type, count) in shard.count_by_type() {
+                *counts.entry(node_type).or_insert(0) += count;
+            }
+        }
+        counts
+    }
+}
+
 // ── Attribute Search ───────────────────────────────────────────────
 
 impl MultiShardStore {
@@ -663,6 +682,16 @@ impl MultiShardStore {
         let mut results = Vec::new();
         for shard in &self.shards {
             results.extend(shard.get_incoming_edges(node_id, edge_types));
+        }
+        results
+    }
+
+    /// Iterate all edges across all shards.
+    /// Each shard handles its own dedup and tombstone filtering.
+    pub fn iter_all_edges(&self) -> Vec<EdgeRecordV2> {
+        let mut results = Vec::new();
+        for shard in &self.shards {
+            results.extend(shard.iter_all_edges());
         }
         results
     }

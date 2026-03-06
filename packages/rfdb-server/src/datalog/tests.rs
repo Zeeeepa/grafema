@@ -3277,6 +3277,54 @@ mod eval_tests {
                 "explain steps should be non-empty, confirming parent_function dispatch works");
         }
     }
+
+    /// Verify that derived predicate evaluation pushes down bound query args.
+    ///
+    /// Rule: `has_edge(X) :- edge(X, _, T), neq(T, "CONTAINS").`
+    /// When calling `has_edge("1")`, the P0 optimization binds X="1" BEFORE
+    /// evaluating the body. This turns `edge(X, _, T)` into `edge("1", _, T)`
+    /// which uses `get_outgoing_edges` (O(1) bloom) instead of
+    /// `get_all_edges` (full scan).
+    ///
+    /// We verify via EvaluatorExplain stats: `outgoing_edge_calls > 0` and
+    /// `all_edges_calls == 0`.
+    #[test]
+    fn test_derived_predicate_pushdown_uses_outgoing_not_all_edges() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+
+        // has_edge(X) :- edge(X, _, T), neq(T, "CONTAINS").
+        let rule = parse_rule(
+            r#"has_edge(X) :- edge(X, _, T), neq(T, "CONTAINS")."#,
+        ).unwrap();
+
+        let mut evaluator = EvaluatorExplain::new(&engine, false);
+        evaluator.add_rule(rule);
+
+        // Query with bound X: has_edge("1")
+        let atom = parse_atom(r#"has_edge("1")"#).unwrap();
+        let result = evaluator.query(&atom);
+
+        // Node 1 has edges: 1->4 CALLS, 1->5 CONTAINS
+        // After neq(T, "CONTAINS") filter, only CALLS edge remains
+        assert!(
+            result.bindings.len() >= 1,
+            "expected at least 1 result for has_edge(\"1\"), got {}",
+            result.bindings.len()
+        );
+
+        // Critical assertion: binding push-down means we used get_outgoing_edges,
+        // NOT get_all_edges (the expensive full scan)
+        assert!(
+            result.stats.outgoing_edge_calls > 0,
+            "expected outgoing_edge_calls > 0 (push-down should bind src before edge lookup)"
+        );
+        assert_eq!(
+            result.stats.all_edges_calls, 0,
+            "expected all_edges_calls == 0 (push-down should prevent full edge scan)"
+        );
+    }
 }
 
 // ============================================================================
