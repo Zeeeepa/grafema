@@ -5,7 +5,7 @@
 //! - Query statistics (nodes visited, edges traversed, etc.)
 //! - Execution timing (profiling)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 
@@ -14,6 +14,7 @@ use crate::storage::AttrQuery;
 use crate::datalog::types::*;
 use crate::datalog::eval::{Value, Bindings};
 use super::utils::reorder_literals;
+use super::eval::HASH_JOIN_THRESHOLD;
 
 /// Statistics collected during query execution
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -40,6 +41,8 @@ pub struct QueryStats {
     pub total_results: usize,
     /// Number of rule evaluations
     pub rule_evaluations: usize,
+    /// Number of hash join operations (edge/incoming batched via edge-type index)
+    pub hash_join_count: usize,
     /// Intermediate results per step
     pub intermediate_counts: Vec<usize>,
 }
@@ -164,6 +167,7 @@ impl<'a> EvaluatorExplain<'a> {
     ///
     /// Reorders literals so that predicates requiring bound variables come after
     /// the predicates that provide those bindings, then evaluates left-to-right.
+    /// Uses hash join optimization for edge/incoming predicates when applicable.
     pub fn eval_query(&mut self, literals: &[Literal]) -> Result<QueryResult, String> {
         let ordered = reorder_literals(literals)?;
 
@@ -175,7 +179,58 @@ impl<'a> EvaluatorExplain<'a> {
         self.warnings.clear();
 
         let mut current = vec![Bindings::new()];
+        let mut bound_vars: HashSet<String> = HashSet::new();
+
         for literal in &ordered {
+            // Check if hash join applies for positive edge/incoming literals
+            if let Literal::Positive(atom) = literal {
+                if let Some(join_var) = self.should_hash_join(atom, &bound_vars, current.len()) {
+                    let start = Instant::now();
+                    current = match atom.predicate() {
+                        "edge" => self.eval_edge_hash_join(atom, &current, &join_var),
+                        "incoming" => self.eval_incoming_hash_join(atom, &current, &join_var),
+                        _ => unreachable!(),
+                    };
+                    let duration = start.elapsed();
+                    self.record_step(
+                        "hash_join",
+                        atom.predicate(),
+                        atom.args(),
+                        current.len(),
+                        duration,
+                        Some(format!("key_var={}, bindings_in={}", join_var, current.len())),
+                    );
+                    for var in atom.variables() {
+                        bound_vars.insert(var);
+                    }
+                    if current.is_empty() {
+                        break;
+                    }
+                    continue;
+                }
+            }
+
+            // Check if hash join applies for negation edge/incoming literals
+            if let Literal::Negative(atom) = literal {
+                if let Some(join_var) = self.should_hash_join(atom, &bound_vars, current.len()) {
+                    let start = Instant::now();
+                    current = self.eval_negation_hash_join(atom, &current, &join_var);
+                    let duration = start.elapsed();
+                    self.record_step(
+                        "hash_join_negation",
+                        atom.predicate(),
+                        atom.args(),
+                        current.len(),
+                        duration,
+                        Some(format!("key_var={}", join_var)),
+                    );
+                    if current.is_empty() {
+                        break;
+                    }
+                    continue;
+                }
+            }
+
             let mut next = vec![];
             for bindings in &current {
                 match literal {
@@ -197,6 +252,12 @@ impl<'a> EvaluatorExplain<'a> {
                     }
                 }
             }
+
+            // Update bound_vars with variables from this literal
+            for var in literal.variables() {
+                bound_vars.insert(var);
+            }
+
             current = next;
             if current.is_empty() {
                 break;
@@ -204,6 +265,178 @@ impl<'a> EvaluatorExplain<'a> {
         }
 
         Ok(self.finalize_result(current))
+    }
+
+    /// Decide whether to use hash join for an edge/incoming literal.
+    /// See Evaluator::should_hash_join for full documentation.
+    fn should_hash_join(&self, atom: &Atom, bound_vars: &HashSet<String>, current_count: usize) -> Option<String> {
+        let pred = atom.predicate();
+        if pred != "edge" && pred != "incoming" {
+            return None;
+        }
+
+        let args = atom.args();
+        if args.len() < 3 {
+            return None;
+        }
+
+        if !args[2].is_const() {
+            return None;
+        }
+
+        if current_count <= HASH_JOIN_THRESHOLD {
+            return None;
+        }
+
+        match &args[0] {
+            Term::Var(var) if bound_vars.contains(var.as_str()) => Some(var.clone()),
+            _ => None,
+        }
+    }
+
+    /// Hash join for `edge(Src, Dst, "TYPE")` where Src is bound.
+    /// See Evaluator::eval_edge_hash_join for full documentation.
+    fn eval_edge_hash_join(&mut self, atom: &Atom, current: &[Bindings], src_var: &str) -> Vec<Bindings> {
+        let args = atom.args();
+        let dst_term = &args[1];
+        let type_term = args.get(2);
+
+        let edge_type = match type_term {
+            Some(Term::Const(s)) => s.as_str(),
+            _ => return vec![],
+        };
+
+        self.stats.edges_by_type_calls += 1;
+        self.stats.hash_join_count += 1;
+        let edges = self.engine.get_edges_by_type(edge_type);
+        self.stats.edges_traversed += edges.len();
+
+        let mut index: HashMap<u128, Vec<u128>> = HashMap::new();
+        for e in &edges {
+            index.entry(e.src).or_default().push(e.dst);
+        }
+
+        let mut results = Vec::new();
+        for bindings in current {
+            let src_id = match bindings.get(src_var).and_then(|v| v.as_id()) {
+                Some(id) => id,
+                None => continue,
+            };
+
+            if let Some(dsts) = index.get(&src_id) {
+                for &dst_id in dsts {
+                    if let Term::Const(expected_dst) = dst_term {
+                        if expected_dst.parse::<u128>().ok() != Some(dst_id) {
+                            continue;
+                        }
+                    }
+
+                    let mut new_bindings = bindings.clone();
+
+                    match dst_term {
+                        Term::Var(var) => new_bindings.set(var, Value::Id(dst_id)),
+                        Term::Const(_) => {}
+                        Term::Wildcard => {}
+                    }
+
+                    if let Some(Term::Var(var)) = type_term {
+                        new_bindings.set(var, Value::Str(edge_type.to_string()));
+                    }
+
+                    results.push(new_bindings);
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Hash join for `incoming(Dst, Src, "TYPE")` where Dst is bound.
+    /// See Evaluator::eval_incoming_hash_join for full documentation.
+    fn eval_incoming_hash_join(&mut self, atom: &Atom, current: &[Bindings], dst_var: &str) -> Vec<Bindings> {
+        let args = atom.args();
+        let src_term = &args[1];
+        let type_term = args.get(2);
+
+        let edge_type = match type_term {
+            Some(Term::Const(s)) => s.as_str(),
+            _ => return vec![],
+        };
+
+        self.stats.edges_by_type_calls += 1;
+        self.stats.hash_join_count += 1;
+        let edges = self.engine.get_edges_by_type(edge_type);
+        self.stats.edges_traversed += edges.len();
+
+        let mut index: HashMap<u128, Vec<u128>> = HashMap::new();
+        for e in &edges {
+            index.entry(e.dst).or_default().push(e.src);
+        }
+
+        let mut results = Vec::new();
+        for bindings in current {
+            let dst_id = match bindings.get(dst_var).and_then(|v| v.as_id()) {
+                Some(id) => id,
+                None => continue,
+            };
+
+            if let Some(srcs) = index.get(&dst_id) {
+                for &src_id in srcs {
+                    if let Term::Const(expected_src) = src_term {
+                        if expected_src.parse::<u128>().ok() != Some(src_id) {
+                            continue;
+                        }
+                    }
+
+                    let mut new_bindings = bindings.clone();
+
+                    match src_term {
+                        Term::Var(var) => new_bindings.set(var, Value::Id(src_id)),
+                        Term::Const(_) => {}
+                        Term::Wildcard => {}
+                    }
+
+                    if let Some(Term::Var(var)) = type_term {
+                        new_bindings.set(var, Value::Str(edge_type.to_string()));
+                    }
+
+                    results.push(new_bindings);
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Hash join for negation: `\+ edge(X, _, "TYPE")` or `\+ incoming(X, _, "TYPE")`
+    /// See Evaluator::eval_negation_hash_join for full documentation.
+    fn eval_negation_hash_join(&mut self, atom: &Atom, current: &[Bindings], key_var: &str) -> Vec<Bindings> {
+        let args = atom.args();
+        let edge_type = match args.get(2) {
+            Some(Term::Const(s)) => s.as_str(),
+            _ => return current.to_vec(),
+        };
+
+        self.stats.edges_by_type_calls += 1;
+        self.stats.hash_join_count += 1;
+        let edges = self.engine.get_edges_by_type(edge_type);
+        self.stats.edges_traversed += edges.len();
+
+        let exists: HashSet<u128> = match atom.predicate() {
+            "edge" => edges.iter().map(|e| e.src).collect(),
+            "incoming" => edges.iter().map(|e| e.dst).collect(),
+            _ => return current.to_vec(),
+        };
+
+        current.iter()
+            .filter(|bindings| {
+                match bindings.get(key_var).and_then(|v| v.as_id()) {
+                    Some(id) => !exists.contains(&id),
+                    None => true,
+                }
+            })
+            .cloned()
+            .collect()
     }
 
     /// Build the final QueryResult from raw bindings
@@ -1023,11 +1256,62 @@ impl<'a> EvaluatorExplain<'a> {
     /// Evaluate rule body with initial bindings.
     ///
     /// Reorders body literals before evaluation to ensure correct variable binding order.
+    /// Uses hash join optimization for edge/incoming predicates when applicable.
     fn eval_rule_body_with(&mut self, rule: &Rule, initial: Bindings) -> Result<Vec<Bindings>, String> {
         let ordered = reorder_literals(rule.body())?;
         let mut current = vec![initial];
+        let mut bound_vars: HashSet<String> = HashSet::new();
 
         for literal in &ordered {
+            // Check if hash join applies for positive edge/incoming literals
+            if let Literal::Positive(atom) = literal {
+                if let Some(join_var) = self.should_hash_join(atom, &bound_vars, current.len()) {
+                    let start = Instant::now();
+                    current = match atom.predicate() {
+                        "edge" => self.eval_edge_hash_join(atom, &current, &join_var),
+                        "incoming" => self.eval_incoming_hash_join(atom, &current, &join_var),
+                        _ => unreachable!(),
+                    };
+                    let duration = start.elapsed();
+                    self.record_step(
+                        "hash_join",
+                        atom.predicate(),
+                        atom.args(),
+                        current.len(),
+                        duration,
+                        Some(format!("key_var={}", join_var)),
+                    );
+                    for var in atom.variables() {
+                        bound_vars.insert(var);
+                    }
+                    if current.is_empty() {
+                        break;
+                    }
+                    continue;
+                }
+            }
+
+            // Check if hash join applies for negation edge/incoming literals
+            if let Literal::Negative(atom) = literal {
+                if let Some(join_var) = self.should_hash_join(atom, &bound_vars, current.len()) {
+                    let start = Instant::now();
+                    current = self.eval_negation_hash_join(atom, &current, &join_var);
+                    let duration = start.elapsed();
+                    self.record_step(
+                        "hash_join_negation",
+                        atom.predicate(),
+                        atom.args(),
+                        current.len(),
+                        duration,
+                        Some(format!("key_var={}", join_var)),
+                    );
+                    if current.is_empty() {
+                        break;
+                    }
+                    continue;
+                }
+            }
+
             let mut next = vec![];
 
             for bindings in &current {
@@ -1051,6 +1335,10 @@ impl<'a> EvaluatorExplain<'a> {
                         }
                     }
                 }
+            }
+
+            for var in literal.variables() {
+                bound_vars.insert(var);
             }
 
             current = next;
