@@ -238,6 +238,8 @@ export class KnowledgeBase {
     type: KBNodeType;
     content: string;
     slug?: string;
+    subtype?: string;
+    scope?: 'global' | 'project' | 'module';
     projections?: string[];
     source?: string;
     relates_to?: string[];
@@ -285,6 +287,8 @@ export class KnowledgeBase {
       type: params.type,
       created,
     };
+    if (params.subtype) frontmatter.subtype = params.subtype;
+    if (params.scope) frontmatter.scope = params.scope;
     if (params.projections?.length) frontmatter.projections = params.projections;
     if (params.source) frontmatter.source = params.source;
     if (params.relates_to?.length) frontmatter.relates_to = params.relates_to;

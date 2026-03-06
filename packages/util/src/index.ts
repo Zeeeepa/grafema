@@ -186,6 +186,7 @@ export type { ResolverBackend } from './knowledge/index.js';
 export type {
   KBNodeType,
   KBLifecycle,
+  KBScope,
   KBNodeBase,
   KBDecision,
   KBFact,

@@ -29,6 +29,8 @@ export async function handleAddKnowledge(args: AddKnowledgeArgs): Promise<ToolRe
       type: args.type as KBNodeType,
       content: args.content,
       slug: args.slug,
+      subtype: args.subtype,
+      scope: args.scope as 'global' | 'project' | 'module' | undefined,
       projections: args.projections,
       relates_to: args.relates_to,
       status: args.status as KBDecision['status'],

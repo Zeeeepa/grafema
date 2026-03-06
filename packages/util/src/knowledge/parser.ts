@@ -8,7 +8,7 @@
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { readFileSync, appendFileSync, mkdirSync, existsSync } from 'fs';
 import { dirname } from 'path';
-import type { KBNode, KBNodeType, KBEdge, KBLifecycle, KBDecision, KBFact, KBSession } from './types.js';
+import type { KBNode, KBNodeType, KBEdge, KBLifecycle, KBDecision, KBFact, KBSession, KBScope } from './types.js';
 
 const VALID_TYPES: KBNodeType[] = ['DECISION', 'FACT', 'SESSION', 'COMMIT', 'FILE_CHANGE', 'AUTHOR', 'TICKET', 'INCIDENT'];
 const ID_PATTERN = /^kb:[a-z_]+:[a-z0-9_-]+$/;
@@ -85,6 +85,8 @@ export function parseKBNode(frontmatter: Record<string, unknown>, body: string, 
   };
 
   // Optional base fields
+  if (frontmatter.subtype) base.subtype = String(frontmatter.subtype);
+  if (frontmatter.scope) base.scope = frontmatter.scope as KBScope;
   if (frontmatter.source) base.source = String(frontmatter.source);
   if (Array.isArray(frontmatter.relates_to)) base.relates_to = frontmatter.relates_to as string[];
 
@@ -153,6 +155,8 @@ export function serializeKBNode(node: KBNode): string {
   }
 
   // Common optional fields
+  if (node.subtype) fm.subtype = node.subtype;
+  if (node.scope) fm.scope = node.scope;
   if (node.projections.length > 0) fm.projections = node.projections;
   if (node.source) fm.source = node.source;
   if (node.relates_to?.length) fm.relates_to = node.relates_to;

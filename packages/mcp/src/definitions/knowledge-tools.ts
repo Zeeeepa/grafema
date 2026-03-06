@@ -39,6 +39,15 @@ Example: add_knowledge(type="DECISION", content="Use file-based storage for KB",
           type: 'string',
           description: 'URL-safe slug for the ID (auto-generated from content if omitted). Format: lowercase, hyphens, digits.',
         },
+        subtype: {
+          type: 'string',
+          description: 'Subtype within the node type. FACT: domain, error, preference. DECISION: adr, runbook. Extensible — not restricted to these values.',
+        },
+        scope: {
+          type: 'string',
+          description: 'Scope of applicability for this knowledge node',
+          enum: ['global', 'project', 'module'],
+        },
         relates_to: {
           type: 'array',
           items: { type: 'string' },

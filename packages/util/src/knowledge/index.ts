@@ -9,6 +9,7 @@ export { parseFrontmatter, parseKBNode, serializeKBNode, parseEdgesFile, appendE
 export type {
   KBNodeType,
   KBLifecycle,
+  KBScope,
   KBNodeBase,
   KBDecision,
   KBFact,

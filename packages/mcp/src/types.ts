@@ -371,6 +371,8 @@ export interface AddKnowledgeArgs {
   type: string;
   content: string;
   slug?: string;
+  subtype?: string;
+  scope?: string;
   relates_to?: string[];
   projections?: string[];
   status?: string;
