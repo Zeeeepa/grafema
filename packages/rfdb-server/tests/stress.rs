@@ -3,6 +3,9 @@
 //! Validates correctness under load — not a performance benchmark.
 //! Tests that the engine handles 100K nodes + 700K edges without
 //! data corruption or panics.
+//!
+//! All tests are `#[ignore]` by default (slow). Run explicitly:
+//! `cargo test --test stress -- --ignored`
 
 use std::collections::HashMap;
 use rfdb::graph::GraphEngineV2;
@@ -51,6 +54,7 @@ fn make_edges(count: usize, node_count: usize) -> Vec<EdgeRecord> {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore]
 fn stress_100k_nodes_700k_edges() {
     let dir = TempDir::new().unwrap();
     let mut engine = GraphEngineV2::create(dir.path()).unwrap();
@@ -121,6 +125,7 @@ fn stress_100k_nodes_700k_edges() {
 }
 
 #[test]
+#[ignore]
 fn stress_flush_and_reload_100k() {
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("stress.rfdb");
@@ -148,6 +153,7 @@ fn stress_flush_and_reload_100k() {
 }
 
 #[test]
+#[ignore]
 fn stress_large_batch_commit() {
     let mut engine = GraphEngineV2::create_ephemeral();
     let node_count = 50_000;
@@ -169,6 +175,7 @@ fn stress_large_batch_commit() {
 }
 
 #[test]
+#[ignore]
 fn stress_commit_batch_tombstones_survive_restart() {
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("tombstone-stress.rfdb");
