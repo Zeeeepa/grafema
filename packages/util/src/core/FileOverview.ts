@@ -278,6 +278,29 @@ export class FileOverview {
           callNames.add(call.name);
         }
       }
+
+      // Fallback: when HAS_SCOPE edges are missing (orchestrator doesn't create
+      // FUNCTION → HAS_SCOPE), find CALL nodes by file + line range.
+      if (callNames.size === 0 && node.file && node.line != null) {
+        const endLine = (node.endLine as number | undefined) ?? (node.line as number) + 100000;
+        const nodeLine = node.line as number;
+        const filter: NodeFilter = { file: node.file, type: 'CALL' };
+        for await (const callNode of this.graph.queryNodes(filter)) {
+          const callLine = callNode.line as number | undefined;
+          if (callLine != null && callLine >= nodeLine && callLine <= endLine) {
+            const callsEdges = await this.graph.getOutgoingEdges(callNode.id, ['CALLS']);
+            if (callsEdges.length > 0) {
+              const target = await this.graph.getNode(callsEdges[0].dst);
+              if (target) {
+                callNames.add(target.name ?? callNode.name ?? '<unknown>');
+              }
+            } else {
+              callNames.add(callNode.name ?? '<unknown>');
+            }
+          }
+        }
+      }
+
       overview.calls = Array.from(callNames);
     }
 

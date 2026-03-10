@@ -428,9 +428,12 @@ pub async fn run_plugin(
     let result = tokio::time::timeout(timeout_duration, async {
         match plugin.mode {
             PluginMode::Streaming => {
-                let mut output = match resolve_pool {
-                    Some(pool) => run_streaming_plugin_pooled(plugin, rfdb, pool).await?,
-                    None => run_streaming_plugin(plugin, rfdb).await?,
+                // Use the resolve daemon pool only for grafema-resolve subcommands.
+                // User-defined plugins with custom commands run as standalone processes.
+                let is_resolve_cmd = plugin.command.starts_with("grafema-resolve");
+                let mut output = match (resolve_pool, is_resolve_cmd) {
+                    (Some(pool), true) => run_streaming_plugin_pooled(plugin, rfdb, pool).await?,
+                    _ => run_streaming_plugin(plugin, rfdb).await?,
                 };
                 validate_plugin_output(&output)?;
                 stamp_metadata(&mut output, &plugin.name, generation);

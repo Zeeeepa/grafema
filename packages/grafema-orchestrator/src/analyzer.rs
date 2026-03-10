@@ -1869,6 +1869,10 @@ const RESOLVE_NODE_TYPES: &[&str] = &[
     "CONSTANT",
     "CLASS",
     "CALL",
+    "METHOD",
+    "REFERENCE",
+    "PROPERTY_ACCESS",
+    "PROPERTY_ASSIGNMENT",
     // Haskell types
     "TYPE_CLASS",
     "INSTANCE",
@@ -1876,6 +1880,7 @@ const RESOLVE_NODE_TYPES: &[&str] = &[
     "CONSTRUCTOR",
     "TYPE_SYNONYM",
     "TYPE_FAMILY",
+    "RECORD_FIELD",
     // Rust types
     "STRUCT",
     "ENUM",
