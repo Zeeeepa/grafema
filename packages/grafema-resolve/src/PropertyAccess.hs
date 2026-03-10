@@ -1,10 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
--- | Property access read-context resolution plugin.
+-- | Property access resolution plugin.
 --
 -- Creates READS_FROM edges for PROPERTY_ACCESS nodes that read properties.
--- Handles:
---   - @this.prop@ → PROPERTY_ASSIGNMENT or METHOD in same class
---   - @ClassName.staticProp@ → PROPERTY_ASSIGNMENT or METHOD in named class
+-- Handles (in priority order):
+--   1. @this.prop@ → PROPERTY_ASSIGNMENT or METHOD in same class
+--   2. @ClassName.staticProp@ → PROPERTY_ASSIGNMENT or METHOD in named class
+--   3. @nsImport.prop@ → exported declaration via namespace import
 --
 -- Does NOT handle dynamic property access or type-inferred resolution.
 module PropertyAccess (run, resolveAll) where
@@ -12,6 +13,11 @@ module PropertyAccess (run, resolveAll) where
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
 import Grafema.Protocol (PluginCommand(..), readNodesFromStdin, writeCommandsToStdout)
 import ResolveUtil (extractClassFromId, lookupMetaText)
+import ImportResolution
+  ( ExportIndex, ExportEntry(..)
+  , buildExportIndex, resolveModulePath, isRelativeSpecifier
+  , findMatchingExport, extractImportSource, extractImportedName
+  )
 
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -25,6 +31,16 @@ import Data.Char (isUpper)
 
 -- | Property definition index: (file, className, propertyName) -> node ID
 type PropertyDefIndex = Map (Text, Text, Text) Text
+
+-- | An import binding record: in file F, local name L was imported
+-- from source S with imported name N.
+data ImportBinding = ImportBinding
+  { ibSource       :: !Text  -- module specifier (e.g., "./utils")
+  , ibImportedName :: !Text  -- original export name (e.g., "greet", "default", "*")
+  }
+
+-- | Import binding index: (file, localName) -> ImportBinding
+type ImportBindingIndex = Map (Text, Text) ImportBinding
 
 -- ---------------------------------------------------------------------------
 -- Index construction
@@ -59,42 +75,62 @@ extractClassName node =
     Just cn -> Just cn
     Nothing -> extractClassFromId (gnId node)
 
+-- | Build an index of import bindings from IMPORT_BINDING nodes.
+-- Only includes relative specifiers (bare specifiers are handled by Builtins).
+buildImportBindingIndex :: [GraphNode] -> ImportBindingIndex
+buildImportBindingIndex nodes =
+  Map.fromList
+    [ ((gnFile n, gnName n), ImportBinding source importedName)
+    | n <- nodes
+    , gnType n == "IMPORT_BINDING"
+    , Just source <- [extractImportSource n]
+    , isRelativeSpecifier source
+    , Just importedName <- [extractImportedName n]
+    ]
+
 -- ---------------------------------------------------------------------------
 -- Resolution
 -- ---------------------------------------------------------------------------
 
 -- | Core property access resolution logic.
+-- Tries same-file class resolution first, then cross-file namespace imports.
 resolveAll :: [GraphNode] -> [PluginCommand]
 resolveAll nodes =
-  let propDefIndex = buildPropertyDefIndex nodes
-      propAccessNodes = filter (\n -> gnType n == "PROPERTY_ACCESS") nodes
-  in concatMap (resolvePropAccess propDefIndex) propAccessNodes
+  let propDefIndex      = buildPropertyDefIndex nodes
+      exportIndex       = buildExportIndex nodes
+      importBindingIndex = buildImportBindingIndex nodes
+      propAccessNodes   = filter (\n -> gnType n == "PROPERTY_ACCESS") nodes
+  in concatMap (resolvePropAccess propDefIndex exportIndex importBindingIndex) propAccessNodes
 
 -- | Resolve a single PROPERTY_ACCESS node.
-resolvePropAccess :: PropertyDefIndex -> GraphNode -> [PluginCommand]
-resolvePropAccess propDefIndex node =
+-- Priority: same-file class members → cross-file namespace imports.
+resolvePropAccess :: PropertyDefIndex -> ExportIndex -> ImportBindingIndex -> GraphNode -> [PluginCommand]
+resolvePropAccess propDefIndex exportIndex importBindingIndex node =
   let file     = gnFile node
       propName = gnName node
-      -- objectName can be in metadata or derivable from context
       mObjectName = lookupMetaText "base" (gnMetadata node)
   in case mObjectName of
-    Nothing -> []
+    Nothing -> tryCrossFile exportIndex importBindingIndex node
     Just objectName
       -- "this.prop" or "super.prop" -> resolve in enclosing class
       | objectName == "this" || objectName == "super" ->
           case extractClassFromId (gnId node) of
             Just className ->
-              tryResolve propDefIndex file className propName node
-            Nothing -> []
+              case tryResolveClass propDefIndex file className propName node of
+                [] -> tryCrossFile exportIndex importBindingIndex node
+                result -> result
+            Nothing -> tryCrossFile exportIndex importBindingIndex node
       -- "ClassName.prop" where ClassName starts with uppercase
       | not (T.null objectName) && isUpper (T.head objectName) ->
-          tryResolve propDefIndex file objectName propName node
-      -- "obj.prop" where obj is a variable -> can't resolve without types
-      | otherwise -> []
+          case tryResolveClass propDefIndex file objectName propName node of
+            [] -> tryCrossFile exportIndex importBindingIndex node
+            result -> result
+      -- "obj.prop" where obj is a variable -> try cross-file
+      | otherwise -> tryCrossFile exportIndex importBindingIndex node
 
--- | Try to resolve a property to its definition.
-tryResolve :: PropertyDefIndex -> Text -> Text -> Text -> GraphNode -> [PluginCommand]
-tryResolve propDefIndex file className propName node =
+-- | Try to resolve a property to its same-file class definition.
+tryResolveClass :: PropertyDefIndex -> Text -> Text -> Text -> GraphNode -> [PluginCommand]
+tryResolveClass propDefIndex file className propName node =
   case Map.lookup (file, className, propName) propDefIndex of
     Just targetId -> [EmitEdge GraphEdge
       { geSource   = gnId node
@@ -103,6 +139,51 @@ tryResolve propDefIndex file className propName node =
       , geMetadata = Map.singleton "resolvedVia" (MetaText "property-access")
       }]
     Nothing -> []
+
+-- | Try to resolve via cross-file namespace import.
+tryCrossFile :: ExportIndex -> ImportBindingIndex -> GraphNode -> [PluginCommand]
+tryCrossFile exportIndex importBindingIndex node =
+  let file = gnFile node
+      name = gnName node
+  in case resolvePropertyAccess importBindingIndex exportIndex file name of
+    Just targetId -> [EmitEdge GraphEdge
+      { geSource   = gnId node
+      , geTarget   = targetId
+      , geType     = "READS_FROM"
+      , geMetadata = Map.singleton "resolvedVia" (MetaText "property-access")
+      }]
+    Nothing -> []
+
+-- | Resolve a property access against the import binding index and export index.
+-- V1: Only resolves namespace imports (import * as X from '...'; X.prop).
+resolvePropertyAccess :: ImportBindingIndex -> ExportIndex -> Text -> Text -> Maybe Text
+resolvePropertyAccess importBindingIndex exportIndex file name =
+  case T.breakOn "." name of
+    (objectName, rest)
+      | not (T.null rest) ->
+          let propertyName = T.drop 1 rest
+          in case Map.lookup (file, objectName) importBindingIndex of
+            Just ib
+              | ibImportedName ib == "*" ->
+                  -- Namespace import: resolve propertyName from the target module
+                  resolveInModule exportIndex file (ibSource ib) propertyName
+              | otherwise -> Nothing  -- Named import, skip in V1
+            Nothing -> Nothing  -- Not an import, skip
+      | otherwise -> Nothing  -- No "." in name, not a property access
+
+-- | Resolve a name from a module's exports.
+-- Returns the node ID of the target export entry.
+resolveInModule :: ExportIndex -> Text -> Text -> Text -> Maybe Text
+resolveInModule exportIndex importerFile source importedName =
+  case resolveModulePath importerFile source exportIndex Map.empty of
+    Nothing -> Nothing
+    Just resolvedFile ->
+      case Map.lookup resolvedFile exportIndex of
+        Nothing      -> Nothing
+        Just exports ->
+          case findMatchingExport importedName exports of
+            Nothing    -> Nothing
+            Just entry -> Just (eeNodeId entry)
 
 -- ---------------------------------------------------------------------------
 -- CLI entry point
