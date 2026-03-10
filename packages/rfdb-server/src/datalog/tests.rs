@@ -4269,6 +4269,60 @@ mod hash_join_tests {
     }
 
     #[test]
+    fn test_hash_join_negation_dst_position() {
+        // Negation with dst-position variable: \+ edge(_, X, "CONTAINS")
+        // This is the guarantee pattern that was timing out (RFD-49)
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let mut engine = setup_hash_join_graph(n);
+
+        // Add CONTAINS edges: module → some FUNCTION nodes (but not all)
+        let module_id = (3 * n + 1) as u128;
+        engine.add_nodes(vec![NodeRecord {
+            id: module_id,
+            node_type: Some("MODULE".to_string()),
+            name: Some("mod".to_string()),
+            file: Some("test.js".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            metadata: None,
+            semantic_id: None,
+        }]);
+
+        // Add CONTAINS edges to first n-5 FUNCTION nodes (leave 5 orphans)
+        let orphan_count = 5;
+        let contained_count = n - orphan_count;
+        let mut edges = Vec::new();
+        for i in 1..=contained_count {
+            edges.push(EdgeRecord {
+                src: module_id,
+                dst: i as u128, // FUNCTION node IDs from setup_hash_join_graph
+                edge_type: Some("CONTAINS".to_string()),
+                version: "main".into(),
+                metadata: None,
+                deleted: false,
+            });
+        }
+        engine.add_edges(edges, false);
+
+        let mut evaluator = Evaluator::new(&engine);
+        let rule = parse_rule(
+            r#"orphan(X) :- node(X, "FUNCTION"), \+ edge(_, X, "CONTAINS")."#
+        ).unwrap();
+        evaluator.add_rule(rule);
+
+        let goal = parse_atom("orphan(X)").unwrap();
+        let results = evaluator.query(&goal).unwrap();
+
+        // Only the last 5 FUNCTION nodes should be orphans
+        assert_eq!(results.len(), orphan_count,
+            "only FUNCTION nodes without incoming CONTAINS should match");
+    }
+
+    #[test]
     fn test_hash_join_3literal_with_attr() {
         // Full 3-literal join: node(F, "FUNCTION"), edge(F, C, "CALLS"), attr(C, "name", Name)
         let n = HASH_JOIN_THRESHOLD + 10;
