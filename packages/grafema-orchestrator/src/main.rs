@@ -379,6 +379,93 @@ async fn main() -> Result<()> {
                             "Cross-file CALLS resolution complete"
                         );
 
+                        // Step 5: Same-file CALLS resolution
+                        let mut same_file_output = plugin::run_resolve_with_nodes(
+                            "same-file-calls",
+                            &resolve_nodes,
+                            &[],
+                            &resolve_pool,
+                        )
+                        .await
+                        .context("Same-file CALLS resolution failed")?;
+                        plugin::validate_plugin_output(&same_file_output)?;
+                        plugin::stamp_metadata(&mut same_file_output, "same-file-calls", generation);
+
+                        let same_file_files: Vec<String> = same_file_output
+                            .nodes
+                            .iter()
+                            .filter_map(|n| n.file.clone())
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        rfdb.commit_batch(&same_file_files, &same_file_output.nodes, &same_file_output.edges, false)
+                            .await
+                            .context("Failed to commit same-file CALLS output")?;
+
+                        tracing::info!(
+                            nodes = same_file_output.nodes.len(),
+                            edges = same_file_output.edges.len(),
+                            "Same-file CALLS resolution complete"
+                        );
+
+                        // Step 6: Property access resolution
+                        let mut prop_access_output = plugin::run_resolve_with_nodes(
+                            "property-access",
+                            &resolve_nodes,
+                            &[],
+                            &resolve_pool,
+                        )
+                        .await
+                        .context("Property access resolution failed")?;
+                        plugin::validate_plugin_output(&prop_access_output)?;
+                        plugin::stamp_metadata(&mut prop_access_output, "property-access", generation);
+
+                        let prop_access_files: Vec<String> = prop_access_output
+                            .nodes
+                            .iter()
+                            .filter_map(|n| n.file.clone())
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        rfdb.commit_batch(&prop_access_files, &prop_access_output.nodes, &prop_access_output.edges, false)
+                            .await
+                            .context("Failed to commit property access output")?;
+
+                        tracing::info!(
+                            nodes = prop_access_output.nodes.len(),
+                            edges = prop_access_output.edges.len(),
+                            "Property access resolution complete"
+                        );
+
+                        // Step 7: JS/TS local refs resolution
+                        let mut js_local_refs_output = plugin::run_resolve_with_nodes(
+                            "js-local-refs",
+                            &resolve_nodes,
+                            &[],
+                            &resolve_pool,
+                        )
+                        .await
+                        .context("JS local refs resolution failed")?;
+                        plugin::validate_plugin_output(&js_local_refs_output)?;
+                        plugin::stamp_metadata(&mut js_local_refs_output, "js-local-refs", generation);
+
+                        let js_local_refs_files: Vec<String> = js_local_refs_output
+                            .nodes
+                            .iter()
+                            .filter_map(|n| n.file.clone())
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        rfdb.commit_batch(&js_local_refs_files, &js_local_refs_output.nodes, &js_local_refs_output.edges, false)
+                            .await
+                            .context("Failed to commit JS local refs output")?;
+
+                        tracing::info!(
+                            nodes = js_local_refs_output.nodes.len(),
+                            edges = js_local_refs_output.edges.len(),
+                            "JS local refs resolution complete"
+                        );
+
                         resolve_pool.shutdown().await;
                     }
                     Err(e) => {
@@ -432,6 +519,35 @@ async fn main() -> Result<()> {
                                 nodes = hs_import_output.nodes.len(),
                                 edges = hs_import_output.edges.len(),
                                 "Haskell import resolution complete"
+                            );
+
+                            // Step 8b: Haskell local refs resolution
+                            let mut hs_local_output = plugin::run_resolve_with_nodes(
+                                "haskell-local-refs",
+                                &hs_resolve_nodes,
+                                &[],
+                                &hs_resolve_pool,
+                            )
+                            .await
+                            .context("Haskell local refs resolution failed")?;
+                            plugin::validate_plugin_output(&hs_local_output)?;
+                            plugin::stamp_metadata(&mut hs_local_output, "haskell-local-refs", generation);
+
+                            let hs_local_files: Vec<String> = hs_local_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&hs_local_files, &hs_local_output.nodes, &hs_local_output.edges, false)
+                                .await
+                                .context("Failed to commit Haskell local refs output")?;
+
+                            tracing::info!(
+                                nodes = hs_local_output.nodes.len(),
+                                edges = hs_local_output.edges.len(),
+                                "Haskell local refs resolution complete"
                             );
 
                             hs_resolve_pool.shutdown().await;

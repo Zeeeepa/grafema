@@ -131,7 +131,7 @@ function findMonorepoRoot(): string | null {
 
   for (const candidate of searchPaths) {
     // Check for grafema monorepo markers
-    const hasPackagesDir = existsSync(join(candidate, 'packages', 'core'));
+    const hasPackagesDir = existsSync(join(candidate, 'packages', 'util'));
     const hasRfdbServer = existsSync(join(candidate, 'packages', 'rfdb-server', 'Cargo.toml'));
     if (hasPackagesDir && hasRfdbServer) {
       return candidate;

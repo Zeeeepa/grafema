@@ -591,12 +591,17 @@ impl RfdbClient {
     }
 
     /// Execute a Datalog query and return the result bindings.
+    ///
+    /// Uses the unified `executeDatalog` wire command which auto-detects
+    /// whether the source contains rules (program) or a direct query.
+    /// This allows plugins to use both `violation(X) :- ...` rule syntax
+    /// and direct query syntax like `node(X, "CALL"), attr(X, "name", N)`.
     pub async fn datalog_query(&mut self, query: &str) -> Result<Vec<DatalogResult>> {
         let params = serde_json::json!({
-            "query": query,
+            "source": query,
             "explain": false,
         });
-        let resp = self.send_command("datalogQuery", params).await?;
+        let resp = self.send_command("executeDatalog", params).await?;
 
         Ok(resp.results.unwrap_or_default())
     }
