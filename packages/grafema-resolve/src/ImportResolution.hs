@@ -458,7 +458,8 @@ resolveAllWithWorkspace nodes wsPackages = do
       importBindings = filter (\n -> gnType n == "IMPORT_BINDING") nodes
   bindingEdges <- concat <$> mapM (resolveImport exportIndex wsMap Set.empty 0) importBindings
   let moduleEdges = resolveModuleImports nodes exportIndex wsMap
-  return (bindingEdges ++ moduleEdges)
+  starReExportEdges <- resolveStarReExports nodes exportIndex wsMap
+  return (bindingEdges ++ moduleEdges ++ starReExportEdges)
 
 -- ---------------------------------------------------------------------------
 -- Module-level import resolution (IMPORT → MODULE)
@@ -505,6 +506,60 @@ resolveModuleImport moduleIndex exportIndex wsMap node =
             , geMetadata = Map.singleton "resolvedPath" (MetaText resolvedFile)
             }]
         Nothing -> []
+
+-- ---------------------------------------------------------------------------
+-- Star re-export resolution (EXPORT *:source → MODULE)
+-- ---------------------------------------------------------------------------
+
+-- | Resolve star re-export EXPORT nodes to their target MODULE nodes.
+--
+-- For each EXPORT node with name "*:source", resolve the source specifier
+-- to a file path, look up the MODULE node, and emit a RE_EXPORTS edge.
+-- This satisfies the export-has-target guarantee.
+resolveStarReExports :: [GraphNode] -> ExportIndex -> WorkspaceMap -> IO [PluginCommand]
+resolveStarReExports nodes exportIndex wsMap = do
+  let moduleIndex = buildModuleIndex nodes
+      starExports = filter isStarExport nodes
+  concat <$> mapM (resolveStarReExport moduleIndex exportIndex wsMap) starExports
+
+isStarExport :: GraphNode -> Bool
+isStarExport n = gnType n == "EXPORT" && "*:" `T.isPrefixOf` gnName n
+
+resolveStarReExport :: ModuleIndex -> ExportIndex -> WorkspaceMap -> GraphNode -> IO [PluginCommand]
+resolveStarReExport moduleIndex exportIndex wsMap node = do
+  let source = T.drop 2 (gnName node)  -- "*:./foo.js" → "./foo.js"
+      exporterFile = gnFile node
+      -- Try export index first, then fall back to direct module lookup.
+      -- Files that only export TypeScript types (interfaces, type aliases) may
+      -- not have entries in the export index, but still have MODULE nodes.
+      mResolvedFile = case resolveModulePath exporterFile source exportIndex wsMap of
+        Just f  -> Just f
+        Nothing -> resolveModulePathDirect exporterFile source moduleIndex wsMap
+  case mResolvedFile of
+    Nothing -> return []
+    Just resolvedFile ->
+      case Map.lookup resolvedFile moduleIndex of
+        Just moduleId ->
+          return [EmitEdge GraphEdge
+            { geSource = gnId node
+            , geTarget = moduleId
+            , geType   = "RE_EXPORTS"
+            , geMetadata = Map.singleton "resolvedPath" (MetaText resolvedFile)
+            }]
+        Nothing -> return []
+
+-- | Resolve a module path using the module index instead of the export index.
+-- Fallback for files that only export types (no functions/variables/classes).
+resolveModulePathDirect :: Text -> Text -> ModuleIndex -> WorkspaceMap -> Maybe Text
+resolveModulePathDirect importerFile specifier moduleIndex wsMap
+  | Just (entryPoint, _) <- Map.lookup specifier wsMap
+  , Map.member entryPoint moduleIndex = Just entryPoint
+  | isRelativeSpecifier specifier =
+      let dir = textDirname importerFile
+          resolved = resolveRelative dir specifier
+          candidates = makeCandidates resolved
+      in firstJust (\c -> if Map.member c moduleIndex then Just c else Nothing) candidates
+  | otherwise = Nothing
 
 -- | Run the import resolution plugin.
 --

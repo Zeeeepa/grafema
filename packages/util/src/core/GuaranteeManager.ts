@@ -481,6 +481,14 @@ export class GuaranteeManager {
     const skipped: string[] = [];
 
     for (const g of data.guarantees) {
+      // Normalize: YAML uses 'name', code expects 'id'
+      if (!g.id && g.name) g.id = g.name;
+      // Skip non-Datalog guarantees (integration-test entries have no rule)
+      if (!g.rule) {
+        skipped.push(g.id || g.name || 'unknown');
+        continue;
+      }
+
       const fullId = `GUARANTEE:${g.id}`;
       const existing = await this.graph.getNode(fullId);
 

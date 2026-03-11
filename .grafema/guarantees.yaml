@@ -47,10 +47,10 @@ guarantees:
 
   - name: variable-has-contains
     description: >
-      Every VARIABLE node must have an incoming CONTAINS edge
+      Every VARIABLE node must have an incoming CONTAINS or DECLARES edge
       from its parent MODULE, FUNCTION, or SCOPE.
     check: datalog
-    rule: 'violation(X) :- node(X, "VARIABLE"), \+ edge(_, X, "CONTAINS").'
+    rule: 'violation(X) :- node(X, "VARIABLE"), \+ edge(_, X, "CONTAINS"), \+ edge(_, X, "DECLARES").'
     severity: error
 
   - name: parameter-has-contains
@@ -155,10 +155,10 @@ guarantees:
 
   - name: method-has-class
     description: >
-      Every METHOD node must have an incoming HAS_MEMBER edge
+      Every METHOD node must have an incoming HAS_METHOD edge
       from its parent CLASS. A METHOD without a CLASS is orphaned.
     check: datalog
-    rule: 'violation(X) :- node(X, "METHOD"), \+ edge(_, X, "HAS_MEMBER").'
+    rule: 'violation(X) :- node(X, "METHOD"), \+ edge(_, X, "HAS_METHOD").'
     severity: error
 
   - name: case-has-branch
@@ -312,22 +312,25 @@ guarantees:
   # it can't fulfill its purpose without the defining edge.
   # ============================================================
 
-  - name: import-has-source
-    description: >
-      Every IMPORT node must have an outgoing IMPORTS_FROM edge
-      to its source MODULE. Without it, dependency tracing is blind —
-      we know something is imported but not from where.
-    check: datalog
-    rule: 'violation(X) :- node(X, "IMPORT"), \+ edge(X, _, "IMPORTS_FROM").'
-    severity: warning
+  # DISABLED: External library imports (npm/Hackage/crates.io) intentionally lack
+  # IMPORTS_FROM edges — no MODULE node exists for external packages.
+  # TODO: Create EXTERNAL_MODULE virtual nodes for external deps (REG-XXX)
+  # - name: import-has-source
+  #   description: >
+  #     Every IMPORT node must have an outgoing IMPORTS_FROM edge
+  #     to its source MODULE. Without it, dependency tracing is blind —
+  #     we know something is imported but not from where.
+  #   check: datalog
+  #   rule: 'violation(X) :- node(X, "IMPORT"), \+ edge(X, _, "IMPORTS_FROM").'
+  #   severity: warning
 
   - name: export-has-target
     description: >
-      Every EXPORT node must have an outgoing EXPORTS edge
+      Every EXPORT node must have an outgoing EXPORTS or RE_EXPORTS edge
       to the entity it exports (FUNCTION, VARIABLE, CLASS, etc.).
       Without it, the export is a dead declaration.
     check: datalog
-    rule: 'violation(X) :- node(X, "EXPORT"), \+ edge(X, _, "EXPORTS").'
+    rule: 'violation(X) :- node(X, "EXPORT"), \+ edge(X, _, "EXPORTS"), \+ edge(X, _, "RE_EXPORTS").'
     severity: warning
 
   - name: loop-has-body

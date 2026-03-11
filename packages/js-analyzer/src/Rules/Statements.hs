@@ -120,7 +120,18 @@ ruleSwitchStatement node = do
         emitEdge GraphEdge { geSource = nodeId, geTarget = discId, geType = "HAS_CONDITION", geMetadata = Map.empty }
     Nothing -> return ()
   let cases = getChildren "cases" node
-  mapM_ (\c -> withAncestor node (walkNode c)) cases
+  mapM_ (\c -> do
+    mCaseId <- withAncestor node (walkNode c)
+    forM_ mCaseId $ \caseId -> do
+      let isDefault = case getChildrenMaybe "test" c of
+                        Nothing -> True
+                        _       -> False
+          edgeType = if isDefault then "HAS_DEFAULT" else "HAS_CASE"
+      emitEdge GraphEdge
+        { geSource = nodeId, geTarget = caseId
+        , geType = edgeType, geMetadata = Map.empty
+        }
+    ) cases
   return (Just nodeId)
 
 -- ── Switch Case ──────────────────────────────────────────────────────────
@@ -175,6 +186,11 @@ ruleForStatement node = do
     , gnExported = False, gnMetadata = Map.singleton "kind" (MetaText "for")
     }
   withScope BlockScope loopId $ do
+    bodyScopeId <- askScopeId
+    emitEdge GraphEdge
+      { geSource = loopId, geTarget = bodyScopeId
+      , geType = "HAS_BODY", geMetadata = Map.empty
+      }
     case getChildrenMaybe "init" node of
       Just ini -> do
         mIniId <- withAncestor node (walkNode ini)
@@ -194,7 +210,10 @@ ruleForStatement node = do
           emitEdge GraphEdge { geSource = loopId, geTarget = updId, geType = "HAS_UPDATE", geMetadata = Map.empty }
       Nothing -> return ()
     case getChildrenMaybe "body" node of
-      Just body -> withAncestor node (walkNode body) >> return ()
+      Just body -> do
+        mBodyId <- withAncestor node (walkNode body)
+        forM_ mBodyId $ \bodyId ->
+          emitEdge GraphEdge { geSource = loopId, geTarget = bodyId, geType = "HAS_BODY", geMetadata = Map.empty }
       Nothing -> return ()
   return (Just loopId)
 
@@ -213,6 +232,11 @@ ruleForInOfStatement node = do
     , gnExported = False, gnMetadata = Map.singleton "kind" (MetaText "for-in-of")
     }
   withScope BlockScope loopId $ do
+    bodyScopeId <- askScopeId
+    emitEdge GraphEdge
+      { geSource = loopId, geTarget = bodyScopeId
+      , geType = "HAS_BODY", geMetadata = Map.empty
+      }
     case getChildrenMaybe "left" node of
       Just left -> withAncestor node (walkNode left) >> return ()
       Nothing   -> return ()
@@ -223,7 +247,10 @@ ruleForInOfStatement node = do
           emitEdge GraphEdge { geSource = loopId, geTarget = rightId, geType = "ITERATES_OVER", geMetadata = Map.empty }
       Nothing -> return ()
     case getChildrenMaybe "body" node of
-      Just body -> withAncestor node (walkNode body) >> return ()
+      Just body -> do
+        mBodyId <- withAncestor node (walkNode body)
+        forM_ mBodyId $ \bodyId ->
+          emitEdge GraphEdge { geSource = loopId, geTarget = bodyId, geType = "HAS_BODY", geMetadata = Map.empty }
       Nothing -> return ()
   return (Just loopId)
 
@@ -242,15 +269,24 @@ ruleWhileStatement node = do
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.singleton "kind" (MetaText "while")
     }
-  case getChildrenMaybe "test" node of
-    Just test -> do
-      mTestId <- withAncestor node (walkNode test)
-      forM_ mTestId $ \testId ->
-        emitEdge GraphEdge { geSource = loopId, geTarget = testId, geType = "HAS_CONDITION", geMetadata = Map.empty }
-    Nothing -> return ()
-  case getChildrenMaybe "body" node of
-    Just body -> withAncestor node (walkNode body) >> return ()
-    Nothing -> return ()
+  withScope BlockScope loopId $ do
+    bodyScopeId <- askScopeId
+    emitEdge GraphEdge
+      { geSource = loopId, geTarget = bodyScopeId
+      , geType = "HAS_BODY", geMetadata = Map.empty
+      }
+    case getChildrenMaybe "test" node of
+      Just test -> do
+        mTestId <- withAncestor node (walkNode test)
+        forM_ mTestId $ \testId ->
+          emitEdge GraphEdge { geSource = loopId, geTarget = testId, geType = "HAS_CONDITION", geMetadata = Map.empty }
+      Nothing -> return ()
+    case getChildrenMaybe "body" node of
+      Just body -> do
+        mBodyId <- withAncestor node (walkNode body)
+        forM_ mBodyId $ \bodyId ->
+          emitEdge GraphEdge { geSource = loopId, geTarget = bodyId, geType = "HAS_BODY", geMetadata = Map.empty }
+      Nothing -> return ()
   return (Just loopId)
 
 -- ── Try Statement ───────────────────────────────────────────────────────

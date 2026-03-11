@@ -27,7 +27,6 @@ import AST.Span (Span(..))
 ruleTSInterfaceDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleTSInterfaceDeclaration node = do
   file <- askFile
-  moduleId <- askModuleId
   parent <- askNamedParent
   let sp   = astNodeSpan node
       name = case getChildrenMaybe "id" node of
@@ -40,10 +39,6 @@ ruleTSInterfaceDeclaration node = do
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
-    }
-  emitEdge GraphEdge
-    { geSource = moduleId, geTarget = nodeId
-    , geType = "CONTAINS", geMetadata = Map.empty
     }
 
   -- Walk body
@@ -58,7 +53,6 @@ ruleTSInterfaceDeclaration node = do
 ruleTSTypeAliasDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleTSTypeAliasDeclaration node = do
   file <- askFile
-  moduleId <- askModuleId
   parent <- askNamedParent
   let sp   = astNodeSpan node
       name = case getChildrenMaybe "id" node of
@@ -72,10 +66,6 @@ ruleTSTypeAliasDeclaration node = do
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
-  emitEdge GraphEdge
-    { geSource = moduleId, geTarget = nodeId
-    , geType = "CONTAINS", geMetadata = Map.empty
-    }
 
   return (Just nodeId)
 
@@ -84,7 +74,6 @@ ruleTSTypeAliasDeclaration node = do
 ruleTSEnumDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleTSEnumDeclaration node = do
   file <- askFile
-  moduleId <- askModuleId
   parent <- askNamedParent
   let sp   = astNodeSpan node
       name = case getChildrenMaybe "id" node of
@@ -97,10 +86,6 @@ ruleTSEnumDeclaration node = do
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
-    }
-  emitEdge GraphEdge
-    { geSource = moduleId, geTarget = nodeId
-    , geType = "CONTAINS", geMetadata = Map.empty
     }
 
   -- Walk body/members in class-like scope so members can find parent
@@ -116,7 +101,6 @@ ruleTSEnumDeclaration node = do
 ruleTSModuleDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleTSModuleDeclaration node = do
   file <- askFile
-  moduleId <- askModuleId
   parent <- askNamedParent
   let sp   = astNodeSpan node
       name = case getChildrenMaybe "id" node of
@@ -129,10 +113,6 @@ ruleTSModuleDeclaration node = do
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
-    }
-  emitEdge GraphEdge
-    { geSource = moduleId, geTarget = nodeId
-    , geType = "CONTAINS", geMetadata = Map.empty
     }
 
   case getChildrenMaybe "body" node of

@@ -24,9 +24,11 @@ module Analysis.Context
   , askExported
   ) where
 
+import Control.Monad (when)
 import Control.Monad.Reader (ReaderT, runReaderT, asks, local)
 import Control.Monad.Writer.Strict (Writer, runWriter, tell)
 import Data.Text (Text)
+import qualified Data.Map.Strict as Map
 import Analysis.Types
 import AST.Types (ASTNode)
 
@@ -70,7 +72,17 @@ runAnalyzer file moduleId action =
 -- ── Emit helpers ────────────────────────────────────────────────────────
 
 emitNode :: GraphNode -> Analyzer ()
-emitNode n = tell mempty { faNodes = [n] }
+emitNode n = do
+  tell mempty { faNodes = [n] }
+  -- Auto-emit CONTAINS from current scope to this node.
+  -- MODULE and SCOPE are structural roots — they don't get contained.
+  let nodeType = gnType n
+  when (nodeType /= "MODULE" && nodeType /= "SCOPE") $ do
+    parentId <- asks (scopeId . ctxScope)
+    tell mempty { faEdges = [GraphEdge
+      { geSource = parentId, geTarget = gnId n
+      , geType = "CONTAINS", geMetadata = Map.empty
+      }] }
 
 emitEdge :: GraphEdge -> Analyzer ()
 emitEdge e = tell mempty { faEdges = [e] }

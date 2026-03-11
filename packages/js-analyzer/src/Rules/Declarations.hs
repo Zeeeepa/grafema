@@ -44,22 +44,24 @@ ruleVariableDeclaration node = do
         "let"   -> DeclLet
         "const" -> DeclConst
         _       -> DeclLet
-  goDeclarators dk decls
-  return Nothing
+  goDeclarators dk Nothing decls
   where
-    goDeclarators :: DeclKind -> [ASTNode] -> Analyzer ()
-    goDeclarators _ [] = return ()
-    goDeclarators dk (d:ds) = do
+    goDeclarators :: DeclKind -> Maybe Text -> [ASTNode] -> Analyzer (Maybe Text)
+    goDeclarators _ firstId [] = return firstId
+    goDeclarators dk firstId (d:ds) = do
       mNodeId <- withAncestor node (ruleVariableDeclarator d node)
       case mNodeId of
         Just nodeId -> do
           let name = case getChildrenMaybe "id" d of
                        Just idNode -> getTextFieldOr "name" "" idNode
                        Nothing     -> ""
+              firstId' = case firstId of
+                Nothing -> Just nodeId
+                _       -> firstId
           if T.null name
-            then goDeclarators dk ds
-            else declareInScope (Declaration nodeId dk name) (goDeclarators dk ds)
-        Nothing -> goDeclarators dk ds
+            then goDeclarators dk firstId' ds
+            else declareInScope (Declaration nodeId dk name) (goDeclarators dk firstId' ds)
+        Nothing -> goDeclarators dk firstId ds
 
 -- | VariableDeclarator: emit VARIABLE or CONSTANT node + DECLARES edge + ASSIGNED_FROM
 ruleVariableDeclarator :: ASTNode -> ASTNode -> Analyzer (Maybe Text)
@@ -115,7 +117,6 @@ ruleVariableDeclarator node parentDecl = do
 ruleFunctionDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleFunctionDeclaration node = do
   file <- askFile
-  moduleId <- askModuleId
   let name = case getChildrenMaybe "id" node of
                Just idNode -> getTextFieldOr "name" "<anonymous>" idNode
                Nothing     -> "<anonymous>"
@@ -142,13 +143,6 @@ ruleFunctionDeclaration node = do
         , ("kind", MetaText "function")
         ]
     }
-  emitEdge GraphEdge
-    { geSource = moduleId
-    , geTarget = nodeId
-    , geType   = "CONTAINS"
-    , geMetadata = Map.empty
-    }
-
   -- Scope-aware DECLARES edge
   curScopeId <- askScopeId
   emitEdge GraphEdge
@@ -175,7 +169,6 @@ ruleFunctionDeclaration node = do
 ruleClassDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleClassDeclaration node = do
   file <- askFile
-  moduleId <- askModuleId
   let name = case getChildrenMaybe "id" node of
                Just idNode -> getTextFieldOr "name" "<anonymous>" idNode
                Nothing     -> "<anonymous>"
@@ -190,11 +183,6 @@ ruleClassDeclaration node = do
     , gnEndLine = spanEnd (astNodeSpan node), gnEndColumn = 0
     , gnExported = isExported, gnMetadata = Map.empty
     }
-  emitEdge GraphEdge
-    { geSource = moduleId, geTarget = nodeId
-    , geType = "CONTAINS", geMetadata = Map.empty
-    }
-
   -- Scope-aware DECLARES edge
   curScopeId <- askScopeId
   emitEdge GraphEdge
@@ -458,9 +446,16 @@ ruleExportNamedDeclaration node = do
         Just srcNode -> let s = getTextFieldOr "value" "" srcNode
                         in if T.null s then Nothing else Just s
         Nothing      -> Nothing
-  case reExportSource of
-    Just src -> mapM_ (\s -> withNamedParent src $ withAncestor node (walkNode s)) specs
-    Nothing  -> mapM_ (\s -> withAncestor node (walkNode s)) specs
+  mapM_ (\s -> do
+    mSpecId <- case reExportSource of
+      Just src -> withNamedParent src $ withAncestor node (walkNode s)
+      Nothing  -> withAncestor node (walkNode s)
+    forM_ mSpecId $ \specId ->
+      emitEdge GraphEdge
+        { geSource = nodeId, geTarget = specId
+        , geType = "EXPORTS", geMetadata = Map.empty
+        }
+    ) specs
 
   return (Just nodeId)
 
@@ -507,7 +502,6 @@ ruleExportAllDeclaration node = do
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = True, gnMetadata = Map.empty
     }
-
   curScopeId <- askScopeId
   emitDeferred DeferredRef
     { drKind = ImportResolve, drName = source
