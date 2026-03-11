@@ -82,6 +82,59 @@ Use check_guarantees to verify all guarantees.
 Name: no-eval
 Rule: violation(X) :- node(X, "CALL"), attr(X, "name", "eval").
 `,
+    notation: `
+# Grafema DSL — Compact Visual Notation
+
+Grafema DSL renders graph structure as compact, readable notation.
+Output-only — Datalog remains the query language.
+
+## Archetypes & Operators
+
+| Archetype  | Op    | Meaning                   | Example edge types                    |
+|------------|-------|---------------------------|---------------------------------------|
+| contains   | (nest)| structural containment    | CONTAINS, HAS_MEMBER, DECLARES        |
+| depends    | o-    | dependency / import       | DEPENDS_ON, IMPORTS_FROM, USES        |
+| flow_out   | >     | outward call / data flow  | CALLS, ROUTES_TO, PASSES_ARGUMENT     |
+| flow_in    | <     | inward data / type flow   | READS_FROM, ASSIGNED_FROM, EXTENDS    |
+| write      | =>    | persistent side effect    | WRITES_TO, LOGS_TO                    |
+| exception  | >x    | error / rejection         | THROWS, REJECTS, CATCHES_FROM         |
+| publishes  | ~>>   | event / message           | EMITS_EVENT, PUBLISHES_TO, EXPOSED_VIA|
+| gates      | ?|    | conditional guard         | HAS_CONDITION, HAS_CASE               |
+| governs    | |=    | governance / invariant    | GOVERNS, VIOLATES, MONITORED_BY       |
+
+## LOD Levels (depth)
+
+- **depth=0**: Node names only — minimal overview
+- **depth=1** (default): Node + edges — shows all relationships with operators
+- **depth=2**: Node + edges + nested children — full structural expansion
+
+## Perspective Presets
+
+| Preset   | Archetypes shown              | Use case                  |
+|----------|-------------------------------|---------------------------|
+| security | write, exception              | Audit side effects & errors|
+| data     | flow_out, flow_in, write      | Trace data movement       |
+| errors   | exception                     | Error handling review      |
+| api      | flow_out, publishes, depends  | API surface analysis       |
+| events   | publishes                     | Event flow mapping         |
+
+## Special Modifiers
+
+- \`??\` — uncertain/dynamic (unresolved call, dynamic import)
+- \`[]\` — inside loop (edge occurs within iteration)
+
+## Budget
+
+Default budget: 7 items per group. When exceeded, remaining items are
+summarized as \`+N more\`. Override with budget parameter.
+
+## Usage
+
+**MCP:** \`describe(target="src/app.ts->FUNCTION->main", depth=1, perspective="security")\`
+**CLI:** \`grafema describe "src/app.ts->FUNCTION->main" -d 1 --perspective security\`
+
+Target resolution order: semantic ID → file path (MODULE) → node name.
+`,
   };
 
   const content = docs[topic] || docs.overview;

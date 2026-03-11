@@ -125,16 +125,17 @@ Topics available:
 - queries: Datalog query syntax and examples
 - types: Available node and edge types
 - guarantees: How to create and manage code guarantees
+- notation: DSL notation reference (archetypes, operators, LOD, perspectives)
 - onboarding: Step-by-step guide for new projects
 - overview: High-level Grafema architecture
 
-Use this when you need to learn Datalog syntax or understand available features.`,
+Use this when you need to learn Datalog syntax, DSL notation, or understand available features.`,
     inputSchema: {
       type: 'object',
       properties: {
         topic: {
           type: 'string',
-          description: 'Topic: queries, types, guarantees, onboarding, or overview',
+          description: 'Topic: queries, types, guarantees, notation, onboarding, or overview',
         },
       },
     },

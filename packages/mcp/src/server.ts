@@ -153,6 +153,7 @@ EXPLORATION WORKFLOW:
 6. For complex pattern queries → query_graph with Datalog (call get_documentation topic="queries" for syntax)
 7. To query architectural decisions and facts → query_knowledge, query_decisions, get_knowledge_stats
 8. To get a compact visual summary → describe (renders DSL notation with archetype-grouped operators)
+9. For DSL syntax reference → get_documentation topic="notation"
 
 KEY INSIGHT: find_nodes supports partial matching on name and file fields.
 Example: find_nodes(file="auth/") returns all nodes in files matching "auth/".

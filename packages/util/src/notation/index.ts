@@ -17,6 +17,7 @@ export type {
 } from './types.js';
 
 export { EDGE_ARCHETYPE_MAP, lookupEdge } from './archetypes.js';
+export { PERSPECTIVES } from './perspectives.js';
 export { renderNotation } from './renderer.js';
 export { extractSubgraph } from './lodExtractor.js';
 export { shortenName } from './nameShortener.js';

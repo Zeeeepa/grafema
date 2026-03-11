@@ -3,19 +3,10 @@
  */
 
 import { ensureAnalyzed } from '../analysis.js';
-import { renderNotation, extractSubgraph } from '@grafema/util';
-import type { Archetype, DescribeOptions } from '@grafema/util';
+import { renderNotation, extractSubgraph, PERSPECTIVES } from '@grafema/util';
+import type { DescribeOptions } from '@grafema/util';
 import { textResult, errorResult } from '../utils.js';
 import type { ToolResult, DescribeArgs } from '../types.js';
-
-/** Perspective presets map to archetype filters */
-const PERSPECTIVES: Record<string, Archetype[]> = {
-  security: ['write', 'exception'],
-  data: ['flow_out', 'flow_in', 'write'],
-  errors: ['exception'],
-  api: ['flow_out', 'publishes', 'depends'],
-  events: ['publishes'],
-};
 
 export async function handleDescribe(
   args: DescribeArgs,

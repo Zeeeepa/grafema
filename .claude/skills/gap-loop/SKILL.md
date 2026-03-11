@@ -129,6 +129,25 @@ If a previously WORKING story is now BROKEN or PARTIAL:
 - Flag as **REGRESSION** in test results
 - Priority: regressions are fixed FIRST in Step 5
 
+### DSL Validation Tests
+
+Test the `describe` tool (MCP) and `grafema describe` (CLI) notation rendering:
+
+1. **Cross-type rendering**: Run `describe` on at least one FUNCTION, CLASS, and MODULE node from the graph. Verify each returns valid DSL notation with appropriate operators (`o-`, `>`, `<`, etc.).
+
+2. **LOD progression**: Pick one node with edges. Run `describe` at depth=0, depth=1, depth=2. Verify:
+   - depth=0: names only, no operators
+   - depth=1: operators appear with target names
+   - depth=2: nested children expanded with their own edges
+
+3. **Perspective presets**: Test all 5 perspectives (security, data, errors, api, events) on one node with diverse edge types. Verify each perspective filters to its archetype set only.
+
+4. **Budget enforcement**: Run `describe` with `budget=3` on a node with many edges. Verify output includes `+N more` summarization.
+
+5. **Multi-language coverage**: If the graph contains nodes from multiple languages (JS/TS, Haskell, Rust, Python), run `describe` on one node per language. If only JS/TS exists, note multi-language gaps but do NOT treat as test failure.
+
+6. **Empty case**: Find a leaf node with no edges. Run `describe` on it. Expect "No relationships found" message.
+
 ---
 
 ## Step 3: DISCOVER -- Find New Stories
@@ -171,7 +190,22 @@ Push the tools to their limits:
 - `trace_dataflow` with max_depth=20 -> does it handle deep chains?
 - `get_file_overview` on the largest file -> complete results?
 
-### 3.5 Record New Stories
+### 3.5 DSL Coverage Tests
+
+Dedicated stress tests for DSL notation coverage and correctness:
+
+- **Cross-language comparison**: If multiple languages exist in the graph, `describe` similar constructs (e.g., a function with calls) in JS vs Python vs Rust. Compare operator usage and completeness.
+- **Edge coverage audit**: Use `get_schema` to list all edge types in the graph. For each edge type, verify it maps to an archetype in the notation (check `EDGE_ARCHETYPE_MAP`). Any unmapped edge type is a gap.
+- **Large file stress test**: Find the file with the most nodes (`find_nodes` sorted by file). Run `describe` on it at depth=2. Verify output is complete and doesn't truncate silently.
+- **Deeply nested test**: Find a CLASS with methods. Run `describe` at depth=2. Verify methods appear as nested children with their own edges.
+- **Empty graph test**: Run `describe` on a leaf node with no edges. Expect the "No relationships found" fallback message.
+
+**Story templates to create if gaps are found:**
+- US-XX: DSL Describes Functions Across Languages
+- US-XX: DSL Edge Coverage (all edge types map to archetypes)
+- US-XX: DSL Budget Enforcement (large edge sets are summarized)
+
+### 3.6 Record New Stories
 
 For each question that reveals a capability gap or a working capability not yet documented:
 - Create a new US-XX story following the format in AI-AGENT-STORIES.md

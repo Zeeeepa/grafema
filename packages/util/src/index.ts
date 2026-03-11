@@ -224,7 +224,7 @@ export type {
 } from './queries/index.js';
 
 // Notation — DSL rendering engine
-export { EDGE_ARCHETYPE_MAP, lookupEdge, renderNotation, extractSubgraph, shortenName } from './notation/index.js';
+export { EDGE_ARCHETYPE_MAP, lookupEdge, PERSPECTIVES, renderNotation, extractSubgraph, shortenName } from './notation/index.js';
 export type {
   Archetype,
   EdgeMapping,
