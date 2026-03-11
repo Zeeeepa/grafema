@@ -31,7 +31,7 @@ export interface EdgeMapping {
 }
 
 export interface DescribeOptions {
-  /** LOD: 0=names only, 1=edges (default), 2=nested */
+  /** LOD: 0=names, 1=edges (default), 2=nested+fold, 3=nested (exact) */
   depth?: number;
   /** Only show these archetypes */
   archetypeFilter?: Archetype[];
@@ -47,6 +47,17 @@ export interface SubgraphData {
   nodeMap: Map<string, BaseNodeRecord>;
 }
 
+export interface FoldMeta {
+  kind: 'fold' | 'chain' | 'dispatch' | 'leaf-repeat' | 'trivial-group' | 'datum-inline';
+  count: number;
+  label?: string;
+  sourceSummary?: string;
+  chainSteps?: string[];
+  chainSource?: string;
+  branches?: Array<{ pattern: string; handler: string }>;
+  names?: string[];
+}
+
 export interface NotationBlock {
   nodeId: string;
   displayName: string;
@@ -54,6 +65,8 @@ export interface NotationBlock {
   lines: NotationLine[];
   children: NotationBlock[];
   location?: string;
+  /** Set by fold engine — serializer renders fold summaries differently */
+  foldMeta?: FoldMeta;
 }
 
 export interface NotationLine {
