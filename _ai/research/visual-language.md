@@ -549,49 +549,55 @@ Query:     A contains B
 
 #### 2. FLOWS (→) — Directed Movement
 
+> **Note:** The v2 ASCII operator for FLOWS is `>` (outward) / `<` (inward) / `>x` (exception). See section XIV.
+
 ```
 Diagram:   A ──────→ B          (data flow: solid arrow)
            A ═══════→ B          (control flow: thick/double arrow)
            A ~~~→ B              (event/async: wavy arrow)
            A ──⚡──→ B           (error flow: lightning break)
 
-Terminal:  A --> B               (data)
-           A ==> B               (control)
-           A ~~> B               (event)
-           A -!-> B              (error)
+Terminal (v2):
+           A > calls B           (control)
+           A < reads B           (inward data)
+           A => writes B         (persist)
+           A >x throws B         (exception)
 
-Query:     A -> B                (any flow)
-           A ->data B            (data flow)
-           A ->ctrl B            (control flow)
-           A ->event B           (event flow)
-           A ->error B           (error flow)
+Query:     A > B                 (any flow)
+           A > calls B           (control flow)
+           A < reads B           (data in)
+           A >x throws B         (error flow)
 ```
 
 **Visual logic:** Arrow = direction = something moves. Thickness/style = what kind of thing moves. Universally understood.
 
 **Donor:** Circuits (current flow), transport (route arrows), physics (force vectors).
 
-**Modifier system for flow subtypes:**
+**Modifier system for flow subtypes (v2 operators):**
 
-| What moves | Diagram line | Terminal | Query |
-|-----------|-------------|---------|-------|
-| Data (values) | ─── solid thin | `-->` | `->data` |
-| Control (execution) | ═══ solid thick | `==>` | `->ctrl` |
-| Event (signal) | ~~~ wavy | `~~>` | `->event` |
-| Error (exception) | ─⚡─ broken/lightning | `-!->` | `->error` |
-| Async (eventual) | - - - dashed | `-.->` | `->async` |
+| What moves | Diagram line | v2 Terminal | Typical verbs |
+|-----------|-------------|------------|---------------|
+| Data (values) | ─── solid thin | `< reads`, `> passes` | reads, receives, passes |
+| Control (execution) | ═══ solid thick | `> calls`, `> spawns` | calls, delegates, spawns |
+| Persist (write) | ═══ heavy | `=> writes` | writes, stores, produces |
+| Error (exception) | ─⚡─ broken/lightning | `>x throws` | throws, bails, rejects |
+| Async (eventual) | - - - dashed | `> await` | await, resolves, yields |
 
 #### 3. DEPENDS (⇢) — Static Requirement
+
+> **Note:** The v2 ASCII operator for DEPENDS is `o-` (circuit plug). See section XIV.
 
 ```
 Diagram:   A - - - -▷ B         (dashed arrow, open head)
            "A needs B"
 
-Terminal:  A ..> B
-           A depends B
+Terminal (v2):
+           A o- depends B
+           A o- imports B
+           A o- exports createOrder
 
-Query:     A ~> B
-           A depends B
+Query:     A o- B
+           A o- ?
 ```
 
 **Visual logic:** Dashed = potential, not actual. "This connection exists structurally but nothing is flowing right now." Thinner than flow arrows because it's less dynamic.
@@ -617,7 +623,9 @@ Query:     A <| B
 
 **Donor:** Biology (phylogenetic trees point toward ancestors), UML (one of the few UML conventions that stuck), math (⊂ subset).
 
-#### 5. GATES (⊢) — Conditional Control
+#### 5. GATES (⊢) — Admission Control
+
+> **Note:** This section describes the original v1 visual forms. After cross-language stress testing (section XVII), GATES was redefined from "conditional control" to **"admission control"** — a broader concept covering boolean conditions, type constraints, null checks, pattern matching, readiness, and compile-time flags. See section III.5 for the canonical definition. The v2 operator is `?|` (section XIV).
 
 ```
 Diagram:   ──── ╱ ────          (switch: open = blocked)
@@ -633,17 +641,17 @@ Diagram:   ──── ╱ ────          (switch: open = blocked)
                 │
                [C]              (condition)
 
-Terminal:  C ?=> then
-           C ?=> then | else
+Terminal:  C ?| then
+           C ?| then | else
 
-Query:     C ?> then
+Query:     C ?| then
            C gates then
            C ⊢ then
 ```
 
 **Visual logic:** Gap/break in line = passage is not guaranteed. Diamond (from flowcharts) works but is heavier. The circuit switch symbol (╱ gap) is the most intuitive — it literally looks like something that can open or close.
 
-**This is the crown jewel of the circuit analogy.** The switch symbol communicates "conditional passage" instantly:
+**This is the crown jewel of the circuit analogy.** The switch symbol communicates "admission control" instantly:
 - Closed switch (───) = condition met, flow proceeds
 - Open switch (─╱─) = condition not met, flow blocked
 
@@ -657,10 +665,15 @@ Query:     C ?> then
 | feature flag | ──◈── switch | `if (flags.newUI)` |
 | validation | ──▣── filter | `schema.validate(input)` |
 | permission | ──🔒── lock | `if (user.can('write'))` |
+| type constraint | ──╬── gate | `where T: Send` |
+| null check | ──?── check | `guard let x = opt` |
+| pattern match | ──⊞── select | `match x { ... }` |
 
 **Donor:** Electrical circuits (switch, relay, transistor gate, fuse). This is the strongest single analogy in the entire research.
 
-#### 6. PUBLISHES (⇝) — Loose-Coupled Signal
+#### 6. PUBLISHES (⇝) — Runtime Broadcast
+
+> **Note:** After cross-language stress testing (section XVII), PUBLISHES was purified to **runtime broadcast only**. Module exports were reclassified to DEPENDS (mirror of imports). Channels (Go, Rust mpsc) were reclassified to FLOWS (point-to-point). See section III.6 for the canonical definition. The v2 operator is `~>>` (section XIV).
 
 ```
 Diagram:   A ≋≋≋≋▷ B            (wavy/radiated arrow)
@@ -671,18 +684,17 @@ Diagram:   A ≋≋≋≋▷ B            (wavy/radiated arrow)
             ↑   ↑   ↑           (multiple subscribers tap in)
             A   B   C
 
-Terminal:  A ~>> B
-           A emits eventName
-           A publishes queueName
+Terminal:  A ~>> emits eventName
+           A ~>> publishes queueName
 
-Query:     A ~>> B
+Query:     A ~>> ?
            A publishes B
            A ⇝ B
 ```
 
 **Visual logic:** Wavy = signal, not wire. The wave symbol suggests propagation without direct connection. The bus diagram (shared line with taps) is excellent for showing pub/sub architecture.
 
-**Key distinction from FLOWS:** Solid arrow (FLOWS) = point-to-point wire. Wavy arrow (PUBLISHES) = broadcast signal. You can see at a glance which connections are tightly coupled (wires) and which are loosely coupled (signals).
+**Key distinction from FLOWS:** Solid arrow (FLOWS) = point-to-point wire. Wavy arrow (PUBLISHES) = broadcast signal. You can see at a glance which connections are tightly coupled (wires) and which are loosely coupled (signals). Channels (Go `chan`, Rust `mpsc`) are FLOWS, not PUBLISHES — they are typed, directed, point-to-point.
 
 **Donor:** Circuits (radio vs wire, bus vs point-to-point), physics (wave propagation).
 
@@ -704,6 +716,14 @@ Query:     R |= A
 ```
 
 **Visual logic:** Double bar (⊨) from logic = "satisfies" / "models." Heavy, authoritative mark. Not a flow — a standing constraint.
+
+**Three subcategories (see section III.7 for canonical definition):**
+
+| Subcategory | Terminal | Example |
+|-------------|----------|---------|
+| Lifecycle | `\|= lifecycle ...` | RAII, defer, ARC, Rust lifetimes |
+| Access | `\|= access ...` | friend, unsafe, sealed, actor isolation |
+| Rule | `\|= rule ...` | DSL (has_many), interceptors, annotations |
 
 **Donor:** Formal logic (⊨ semantic entailment), law (regulation, stamp of approval), engineering (specification sheet).
 
@@ -804,24 +824,26 @@ req.body -> * => db        # trace data from input to db
 
 For contexts where richer visual encoding is useful, two optional layers exist:
 
-**Emoji layer** (for casual/marketing contexts):
+**Emoji layer** (for casual/marketing contexts — operator column shows v2 equivalents):
 
 | Operator | Emoji | When to use |
 |----------|-------|-------------|
-| `->` | 📞 (calls), ➡️ (generic) | Slack summaries, issue descriptions |
-| `<-` | 👀 | Slack summaries |
+| `>` | 📞 (calls), ➡️ (generic) | Slack summaries, issue descriptions |
+| `<` | 👀 | Slack summaries |
 | `=>` | ✏️ | Slack summaries |
-| `~>` | 🔗 | Slack summaries |
-| `?=>` | 🧬 | Slack summaries |
+| `o-` | 🔗 | Slack summaries |
+| `>x` | 💥 | Slack summaries |
 | `~>>` | 📡 | Slack summaries |
-| `?\|` | 🛡️ | Slack summaries |
-| `\|=` | 🛡️ | Slack summaries |
+| `?|` | 🛡️ | Slack summaries |
+| `|=` | ⚖️ | Slack summaries |
 
 **Diagram layer** (for SVG/Canvas rendering): Line styles (solid, dashed, wavy, zigzag), arrow heads, nesting boxes. Defined in section VI.
 
 ---
 
 ## VIII. Compositionality — Building Complex from Simple
+
+> **Note:** Examples below use the **v2 operators** (section XIV). The v1 operators (`->`, `~>`, `?=>`) that appeared in the original version of this section have been replaced.
 
 ### Principle
 
@@ -831,16 +853,16 @@ A complex relation = archetype + modifier(s). No new symbol needed for domain-sp
 
 | Domain Relation | Decomposition | Compact Notation |
 |----------------|---------------|-----------------|
-| "Function A calls function B" | FLOWS + ctrl | `A ->ctrl B` |
-| "Module A imports from module B" | DEPENDS + module | `A ~>.module B` |
+| "Function A calls function B" | FLOWS + ctrl | `A > calls B` |
+| "Module A imports from module B" | DEPENDS + module | `A o- imports B` |
 | "Class Dog extends Animal" | DERIVES + type | `Dog <\|.type Animal` |
-| "if (auth) then proceed()" | GATES + condition | `auth ?> proceed` |
-| "EventEmitter emits 'data'" | PUBLISHES + event | `emitter ~>>.event 'data'` |
-| "Guarantee G governs function F" | GOVERNS | `G \|= F` |
-| "try { A } catch(e) { B }" | GATES + error | `A ?>.error B` |
-| "A.map(fn)" | FLOWS + data, iterates | `A ->data.iter fn` |
-| "await fetch(url)" | FLOWS + async + ctrl | `fetch ->async.ctrl result` |
-| "socket.on('msg', handler)" | PUBLISHES + subscribe | `socket ~>>.sub 'msg' handler` |
+| "if (auth) then proceed()" | GATES + condition | `auth ?| guards proceed` |
+| "EventEmitter emits 'data'" | PUBLISHES + event | `emitter ~>> emits 'data'` |
+| "Guarantee G governs function F" | GOVERNS | `G \|= enforces F` |
+| "try { A } catch(e) { B }" | GATES + error | `A >x throws B` |
+| "A.map(fn)" | FLOWS + data, iterates | `A > calls[] fn` |
+| "await fetch(url)" | FLOWS + async + ctrl | `fetch > await result` |
+| "socket.on('msg', handler)" | PUBLISHES + subscribe | `socket ~>> subscribes 'msg' handler` |
 
 ### Chain Notation
 
@@ -848,36 +870,36 @@ For multi-step paths (the most common engineering question):
 
 ```
 Request Path:
-  client ->ctrl nginx ->ctrl express ->ctrl router ->ctrl handler
-         ->data req                                 ->data res
+  client > calls nginx > calls express > calls router > calls handler
+         < reads req                                   => writes res
 
 Data Trace:
-  input ->data validate ?> transform ->data db.write ->data log
+  input > calls validate ?| guards schema > calls transform => writes db
 
 Error Path:
-  handler ->error catch ?>.error retry ->error deadLetter
+  handler >x throws err ?| catches retry >x bails deadLetter
 ```
 
 ### Compact Summary Format
 
-**Primary format (ASCII operator + verb):**
+**Primary format (v2 ASCII operator + verb):**
 ```
 AuthService {
-  -> calls UserDB, TokenService
-  <- reads config.auth
+  > calls UserDB, TokenService
+  < reads config.auth
   => writes session.store
-  ~> depends @grafema/util
+  o- depends @grafema/util
   ~>> emits 'auth:login', 'auth:logout'
   ?| guards isAuthenticated
   |= enforces no-plaintext-passwords
 }
 
 OrderService {
-  -> calls PaymentGateway, InventoryService
-  <- reads OrderDB
+  > calls PaymentGateway, InventoryService
+  < reads OrderDB
   => writes OrderDB
-  ~> depends AuthService
-  ?=> derives BaseService
+  o- depends AuthService
+  o- exports createOrder, getOrder
   ~>> emits 'order:created', 'order:completed'
   ?| guards auth.verified
   |= enforces idempotent-creation
@@ -886,34 +908,36 @@ OrderService {
 
 **Request lifecycle (chain format):**
 ```
-client -> calls nginx -> calls express -> calls handler
+client > calls nginx > calls express > calls handler
   ?| guards auth.verified
-  <- reads req.body -> calls validate ?| guards schema => writes db
-  -> throws err ?| catches errorHandler
-  => returns res.json(result)
+  < reads req.body > calls validate ?| guards schema => writes db
+  >x throws err ?| catches errorHandler
+  => writes res.json(result)
 ```
 
-The operator gives instant visual scanning (all `->` lines are outward flows, all `?|` lines are guards). The verb gives precision (calls vs sends vs delegates).
+The operator gives instant visual scanning (all `>` lines are outward flows, all `?|` lines are guards). The verb gives precision (calls vs sends vs delegates).
 
 ---
 
 ## IX. Engineering Questions in the New Notation
+
+> **Note:** Query examples below use the **v2 operators** (section XIV).
 
 The acid test: does the notation make common engineering questions cheaper to answer?
 
 ### Question 1: "Who calls this function?"
 
 ```
-? -> targetFunction
+? > targetFunction
 ```
 Returns all nodes that flow TO targetFunction. `?` is wildcard — "who calls this?"
 
 ### Question 2: "What will break if I change this module?"
 
 ```
-? ~> changedModule
+? o- changedModule
 ```
-Returns all nodes that DEPEND on the changed module. `~>` = dependency = what breaks.
+Returns all nodes that DEPEND on the changed module. `o-` = dependency = what breaks.
 
 ### Question 3: "Trace data from user input to database"
 
@@ -939,15 +963,15 @@ Returns all publications from the service. `~>>` = broadcast.
 ### Question 6: "Show the full request lifecycle"
 
 ```
-client -> nginx -> express -> handler {
-  ?| auth.verified
-  <- req.body -> validate ?| schema => db
-  -> err ?| errorHandler
-  => res.json(result)
+client > calls nginx > calls express > calls handler {
+  ?| guards auth.verified
+  < reads req.body > calls validate ?| guards schema => writes db
+  >x throws err ?| catches errorHandler
+  => writes res.json(result)
 }
 ```
 
-All 5 operators in one readable expression. Flows (`->`), reads (`<-`), writes (`=>`), gates (`?|`), containment (`{}`).
+All 7 operators in one readable expression. Flows (`>`), reads (`<`), writes (`=>`), exceptions (`>x`), gates (`?|`), containment (`{}`), and governance where applicable.
 
 ### Question 7: "What guarantees apply to this code?"
 
@@ -985,9 +1009,9 @@ How does Grafema's 7-archetype proposal compare to the relation sets of existing
 | **Depends** | 13 | 5 (call, type, inheritance, dependency, data) | ✓ | Limited | ✗ |
 | **SciTools Understand** | ~15 | 4 (structural, usage, type, file) | ✓ | ✓ | Limited |
 | **Grafema (current)** | 97 | 12 domains | ✓ | ✗ (planned) | ✓ (Datalog) |
-| **Grafema (proposed)** | 97 → 7 archetypes | 7 | ✓ | Planned | ✓ (Datalog + notation) |
+| **Grafema (proposed)** | 97 → 7 archetypes | 7 | ✓ | Planned | ✓ (Datalog; notation is output format) |
 
-**Key differentiator:** No existing tool has a notation that is simultaneously *visual*, *textual*, and *queryable*. Joern has queries but weak visuals. Sourcetrail has visuals but no query language. Grafema's triplet system (visual + text + query) would be unique.
+**Key differentiator:** No existing tool has a notation that is simultaneously *visual*, *textual*, and *auto-generated from a queryable graph*. Joern has queries but weak visuals. Sourcetrail has visuals but no query language. Grafema's system (Datalog queries → notation output) would be unique. The notation is a rendering of graph data, not a query language — Datalog remains the sole query mechanism.
 
 ### What Grafema Can Learn from Successful Notations
 
@@ -2481,3 +2505,338 @@ processOrder(order: {id, items: [{sku, qty, price}], customer: {id, email}}) {
 - [Declarative Semantic Rules](./declarative-semantic-rules.md) — AST × projection matrix
 - [Sociotechnical Entity Catalog](./sociotechnical-entity-catalog.md) — 258 entities across 12 projections
 - [Sociotechnical Graph Model](./sociotechnical-graph-model.md) — formal projection properties
+
+---
+
+## XVIII. Core Ontology — The Grapheme
+
+The name "Grafema" is not decorative. It carries an internal ontology.
+
+### Definition
+
+> **Grapheme** (графема) — the minimal atomic record of program meaning.
+
+A grapheme is:
+- One **relation archetype** (from the Ennead)
+- Between two **entities** (graph nodes)
+- Constituting one **semantic fact**
+
+```
+module  >  calls  function
+  │     │    │       │
+entity  │  verb    entity
+        │
+   archetype operator
+```
+
+This is one grapheme. It records one fact: "module calls function." It cannot be decomposed further without losing meaning.
+
+### The Compilation Chain
+
+```
+Source code  →  Graph  →  Graphemes  →  Patterns
+   (syntax)     (data)    (atoms)      (compositions)
+```
+
+1. **Source code** contains syntactic noise and implementation details
+2. **Grafema's graph** is the structural decomposition into entities and edges
+3. **Graphemes** are the atomic semantic records — the DSL renders each edge as one grapheme
+4. **Patterns** are compositions of graphemes — a DSL block is a semantic surface
+
+Reading code through Grafema = reading sequences of graphemes, not source syntax.
+
+### Formal Properties of a Grapheme
+
+A grapheme `g = (e₁, a, e₂)` where:
+- `e₁, e₂ ∈ Entities` — graph nodes (source and target)
+- `a ∈ Ennead` — one of the 9 relation archetypes
+
+**Atomicity:** A grapheme cannot be split into smaller meaningful units. `> calls A, B` is two graphemes merged for display: `(self, flow_out, A)` and `(self, flow_out, B)`.
+
+**Completeness:** Every edge in the graph produces exactly one grapheme. No edge is "unrepresentable."
+
+**Readability:** A grapheme is a single line of DSL notation: `operator verb target`.
+
+### Vocabulary
+
+| Term | Definition |
+|------|-----------|
+| **Grapheme** | Minimal atomic record of program meaning: `(entity, archetype, entity)` |
+| **Ennead** | The 9 canonical relation archetypes (§XIX.Inv.4) |
+| **DSL block** | Composition of graphemes for one entity: `name { grapheme* }` |
+| **Semantic surface** | The full DSL output — all graphemes at a given LOD |
+| **LOD** | Level of Detail — controls which graphemes are visible |
+| **Modifier** | Prefix on a grapheme adding context: `[]` (loop), `??` (uncertain) |
+| **Perspective** | Archetype filter — shows only graphemes of selected types |
+
+### Why This Matters
+
+This gives Grafema a precise language of explanation:
+
+- "How complex is this function?" → Count its graphemes.
+- "Are these two functions equivalent?" → Compare their grapheme multisets (Level B).
+- "What changed in this refactoring?" → Diff the grapheme sets before/after.
+- "Is this side-effect-free?" → Check for `{=>, >x, ~>>}` graphemes (Level A).
+
+The grapheme is to Grafema what the atom is to chemistry: the level at which you stop decomposing and start composing.
+
+---
+
+## XIX. Model Invariants — From Representation to Base Model
+
+The DSL implementation (§XIV–XVII) is a rendering engine: graph data → visual text. That makes it a *representation*. To become a *base model* — a foundation from which properties can be proved and equivalences can be established — it needs **invariants**: properties that must hold for ANY program in ANY language expressible by Grafema.
+
+Without invariants, the archetype system is "a clever encoding." With invariants, it becomes "a formal semantic compression with provable properties."
+
+### The Five Foundational Questions
+
+| # | Question | What it establishes |
+|---|----------|-------------------|
+| 1 | What must every program have in the model? | **Existence axioms** |
+| 2 | What must be preserved at every LOD level? | **LOD preservation invariants** |
+| 3 | Which relations are mandatory? | **Relation completeness** |
+| 4 | When are two fragments from different languages equivalent? | **Cross-language equivalence** |
+| 5 | Where is the boundary between implementation detail and semantic structure? | **Abstraction boundary** |
+
+### Invariant 1: Semantic Projectability
+
+> **Any analyzable semantic fragment must map to a non-empty graph projection.**
+
+This is broader than "executable code" — it covers configuration files, type declarations, module manifests, and any other artifact that carries semantic meaning within the system. If Grafema accepts a fragment for analysis, it must produce a non-empty projection.
+
+Formally: for any source fragment `F` in any supported language, if `F` is within Grafema's analysis scope, then the analysis `A(F)` must produce a non-empty set of nodes `N = {n₁, ..., nₖ}` where `k ≥ 1`, and for `k > 1`, at least one edge `e ∈ E` connecting them.
+
+**Corollary:** A program that produces zero nodes has not been analyzed — it is not "empty in the model." The empty program still has a MODULE node (the file exists). Zero nodes = analysis failure, not a valid model state.
+
+**Why this matters:** Without this invariant, the model can silently drop code. Any fragment that produces zero graph output is a gap (per §XVII Gap Discovery Protocol), not an acceptable result.
+
+### Invariant 2: Side Effect Visibility
+
+> **Any external side effect must be representable as a write (=>), publish (~>>), or exception (>x) edge.**
+
+If code writes to a database, emits an event, sends an HTTP response, writes to a file, or throws an error — there must exist at least one edge in the `{write, publishes, exception}` archetype set that captures it.
+
+**Negation test:** If you remove all `=>`, `~>>`, and `>x` lines from a DSL block and the remaining lines suggest the function is pure — but it isn't — the model has failed this invariant.
+
+**Why this matters:** This is the "no hidden mutations" guarantee. An AI agent reading the DSL output must be able to trust: "if there are no `=>` lines, this function doesn't write to external state." Without this, the DSL is decorative — it shows some things but you can't trust what's absent.
+
+### Invariant 3: Scope Boundary Closure
+
+> **Any named semantic boundary must have a containment relation to its contents.**
+
+Every `{ }` block in the DSL corresponds to a node that CONTAINS (or HAS_SCOPE, HAS_MEMBER, etc.) its children. Conversely, every entity that has a name and encloses other entities must be expressible as a containment block.
+
+**Formal:** For nodes `P` (parent) and `C` (child), if `C` is lexically inside `P` in source code and both are named semantic entities, then ∃ edge `P --[contains]--> C` in the graph.
+
+**What this rules out:** "Orphan" nodes that have no scope parent. Functions floating without a module. Methods without a class. Variables without a function. (Synthetic/virtual nodes like `GLOBAL::console` are exempt — they have no lexical source.)
+
+### Invariant 4: Relation Archetype Completeness — The Ennead
+
+> **Any inter-entity influence must be expressible through the 9 relation archetypes (the Ennead).**
+
+The **Grafema Ennead** is the canonical, closed set of relation archetypes. Every semantic relationship between code entities must classify into exactly one:
+
+| # | Archetype | Operator | Intuition | Domain analog |
+|---|-----------|----------|-----------|---------------|
+| 1 | **contains** | `{ }` | Spatial enclosure | Set membership: A ∋ B |
+| 2 | **depends** | `o-` | Supply line | Circuit: power rail |
+| 3 | **flow_out** | `>` | Outward push | Circuit: current source |
+| 4 | **flow_in** | `<` | Inward pull | Circuit: current sink |
+| 5 | **write** | `=>` | Persistent mark | Physics: state change |
+| 6 | **exception** | `>x` | Broken flow | Circuit: fault/short |
+| 7 | **publishes** | `~>>` | Broadcast | Radio: transmitter |
+| 8 | **gates** | `?|` | Conditional pass | Circuit: transistor gate |
+| 9 | **governs** | `\|=` | Authority | Law: jurisdiction |
+
+**Why "Ennead":** Greek ἐννεάς — "group of nine." Gives the concept a proper name instead of "the 9 archetypes." Analogous to how the OSI model has 7 layers, TCP has a 3-way handshake — naming the count makes it citable and canonical.
+
+**Closure property:** If a new edge type cannot be mapped to any member of the Ennead, that's a gap in the archetype system, not a "miscellaneous" category. The Ennead must be sufficient. If it ever proves insufficient, the Ennead must be deliberately expanded (not patched with a fallback).
+
+**Test:** For every `EDGE_TYPE` key in `@grafema/types`, `lookupEdge(type).archetype` must return a deliberate (non-fallback) mapping. The fallback path exists for forwards-compatibility, but in a correct model, it should never be exercised for known edge types.
+
+**Structure of the Ennead:**
+- **Structural** (2): `contains`, `governs` — define topology, not flow
+- **Directional flow** (4): `flow_out`, `flow_in`, `write`, `exception` — directed data/control movement
+- **Environmental** (2): `depends`, `publishes` — relationship to external world
+- **Control** (1): `gates` — conditional access
+
+This is not an arbitrary list. Each archetype answers a different question about code:
+
+| Question | Archetype |
+|----------|-----------|
+| What's inside this? | contains |
+| What does this need? | depends |
+| What does this do? | flow_out |
+| What feeds this? | flow_in |
+| What does this change permanently? | write |
+| How does this fail? | exception |
+| What does this announce? | publishes |
+| What controls access? | gates |
+| What rules apply? | governs |
+
+### Invariant 5: LOD Monotonicity
+
+> **Higher LOD levels strictly add information; they never contradict lower levels.**
+
+- **LOD 0** establishes **existence**: what entities exist and their containment tree.
+- **LOD 1** adds **behavior**: what relations exist between entities.
+- **LOD 2** adds **structure**: nested detail within entities.
+
+**Formally:** `LOD(n) ⊂ LOD(n+1)` — every fact visible at level `n` is still visible at level `n+1`, plus additional facts. No edge or entity visible at LOD 0 disappears at LOD 1.
+
+**What must be preserved at EVERY LOD:**
+- Entity identity (name + type)
+- Containment hierarchy (parent → child)
+- The *existence* of non-containment edges (even if their detail is suppressed)
+
+**What LOD 0 may omit:** Edge operators, target names, modifiers. But it must show that the entity EXISTS and WHERE it lives in the hierarchy.
+
+### Invariant 6: Cross-Language Semantic Equivalence
+
+> **Behaviorally equivalent constructs from different languages must reduce to the same archetype pattern at corresponding LOD.**
+
+This is the hardest invariant and the one that makes the model *interesting*.
+
+**Example:** These must produce identical DSL at LOD 1:
+
+```javascript
+// JavaScript
+async function fetchUser(id) {
+  const user = await db.query('SELECT * FROM users WHERE id = ?', [id]);
+  return user;
+}
+```
+
+```python
+# Python
+async def fetch_user(id):
+    user = await db.query('SELECT * FROM users WHERE id = ?', [id])
+    return user
+```
+
+Both must produce:
+```
+fetchUser {          |  fetch_user {
+  > calls db.query   |    > calls db.query
+  < reads id         |    < reads id
+}                    |  }
+```
+
+**Three levels of "same":**
+
+The word "equivalent" is dangerously vague. We need to be precise about which equivalence we mean. There are three distinct levels, each useful for different purposes:
+
+**Level A: Effect Equivalence** (same observable effects)
+
+> Two fragments are **effect-equivalent** iff they produce the same set of archetype operators in the `{write, exception, publishes}` subset.
+
+This is the weakest equivalence. It answers: "do these two fragments have the same side effects on the outside world?" A function that writes to DB, throws errors, and emits events is effect-equivalent to another function in another language that does the same three things — regardless of internal structure.
+
+**Testable:** Compare `{=>, >x, ~>>}` lines only. Ignore `{>, <, o-, ?|, |=}`.
+
+**Level B: Topology Equivalence** (same archetype topology)
+
+> Two fragments are **topology-equivalent** iff their Ennead archetype multisets are equal: same set of `(archetype, target_count)` pairs, and their containment depth is equal.
+
+This is the medium equivalence. It answers: "do these two fragments have the same *shape* of relationships?" Not just effects, but also internal flow (calls, reads), dependencies, and gating structure.
+
+**Formally:** `F₁ ≡_topo F₂` iff:
+1. For each archetype `a ∈ Ennead`, the number of distinct `(a, verb)` groups is equal
+2. The total target count per group matches
+3. The containment tree depth is equal
+
+**Testable:** Compare full DSL output, ignoring entity names and verb specifics. `> calls A, B` ≡ `> calls X, Y` (both have flow_out with 2 targets).
+
+**Level C: Role Equivalence** (same role in enclosing system)
+
+> Two fragments are **role-equivalent** iff they are topology-equivalent AND their incoming edges from the enclosing system match in archetype pattern.
+
+This is the strongest equivalence. It answers: "are these two fragments interchangeable within a larger system?" Not just same internal shape, but same external interface — who calls them, who reads from them, who depends on them.
+
+**Formally:** `F₁ ≡_role F₂` iff:
+1. `F₁ ≡_topo F₂` (topology equivalence holds)
+2. For each incoming archetype, the count matches
+
+This is the "duck typing" of code semantics: if it has the same shape and the same interface, it's the same thing.
+
+---
+
+**Which level does Invariant 6 require?**
+
+**Level B (Topology Equivalence) is the target for cross-language equivalence.**
+
+Level A is too weak — it ignores internal structure, so `function that calls 10 helpers and reads config` would be equivalent to `function that does everything inline`. That loses too much information.
+
+Level C is too strong for cross-language comparison — incoming edges depend on the rest of the codebase, which differs between language ecosystems.
+
+Level B is the Goldilocks zone: same archetype shape, language-agnostic, testable.
+
+**What this does NOT require:** Same AST structure, same number of intermediate nodes, same edge metadata, same entity names. The equivalence is at the archetype level, not the graph level.
+
+**Why this matters:** This is the property that makes Grafema a *universal* code model rather than "a JS graph tool that also parses Python." If Level B equivalence holds across languages, agents can reason about code behavior independently of source language.
+
+### Invariant 7: Abstraction Boundary — Implementation Detail vs. Semantic Structure
+
+> **A detail is "implementation" (and may be omitted at lower LOD) iff changing it does not change the archetype pattern.**
+
+**Semantic structure** = anything that changes which archetypes appear, which entities are targets, or which containment relationships exist.
+
+**Implementation detail** = anything that can vary without changing the above.
+
+| Semantic (must preserve) | Implementation (may elide) |
+|-------------------------|---------------------------|
+| Function calls another function | Which line the call is on |
+| Variable reads from config | The config key name |
+| Function throws an error class | The error message |
+| Module imports a dependency | Whether it's `import` or `require()` |
+| Loop iterates over collection | Whether it's `for-of` or `.forEach()` |
+| Class extends another class | Whether it's `class` syntax or prototype chain |
+
+**The test:** If you change a detail and the LOD 1 DSL output stays identical — it was an implementation detail. If the DSL changes — it was semantic structure.
+
+### Summary: The Invariant Table
+
+| # | Invariant | Short name | Testable? |
+|---|-----------|-----------|-----------|
+| 1 | Any analyzable fragment → non-empty projection | Semantic Projectability | Yes: `nodeCount > 0` for any analyzed file |
+| 2 | Any external side effect → `{=>, ~>>, >x}` edge | Side Effect Visibility | Yes: compare known side effects vs archetype edges |
+| 3 | Any named enclosure → containment edge | Scope Boundary Closure | Yes: every function/class/module has CONTAINS children |
+| 4 | Any edge type → one of Ennead (9) | Ennead Completeness | Yes: `EDGE_TYPE` keys all in `EDGE_ARCHETYPE_MAP` |
+| 5 | LOD(n) ⊂ LOD(n+1) | LOD Monotonicity | Yes: compare LOD 0/1/2 outputs |
+| 6 | Same behavior + different language → Level B equivalence | Cross-Language Topology | Partially: requires multi-language test fixtures |
+| 7 | Same archetype pattern under detail change → detail is implementation | Abstraction Boundary | Yes: mutation testing on source → check DSL stability |
+
+### From Invariants to Guarantees
+
+Each invariant can become a Grafema guarantee (Datalog rule via `create_guarantee`):
+
+```
+# Invariant 1: Entity Representability
+guarantee "entity-representability"
+  rule: node(M, "MODULE"), NOT edge(M, _, "CONTAINS")
+  severity: warning
+  description: "Module with no contained entities — analysis may have failed"
+
+# Invariant 3: Scope Boundary Closure
+guarantee "scope-closure"
+  rule: node(F, "FUNCTION"), NOT incoming(F, _, "CONTAINS")
+  severity: error
+  description: "Function without a containing module/class — orphan node"
+
+# Invariant 4: Relation Completeness (checked at build time, not runtime)
+# See: test/unit/notation-archetypes.test.js — "should map every EDGE_TYPE"
+```
+
+### Open Questions
+
+1. **Level B at which LOD?** Topology equivalence targets LOD 1. But LOD 0 (existence) and LOD 2 (nested structure) may require separate equivalence claims. Do we need `≡_topo@LOD1` notation?
+
+2. **Invariant 2 completeness:** How do we handle *implicit* side effects? (e.g., `console.log` is a side effect but often not modeled as `=>` write. Should it be? Where's the line?)
+
+3. **Invariant 7 operationalization:** Can we build a mutation-testing harness that automatically discovers the implementation/semantic boundary? (Change source → re-analyze → compare DSL → classify.)
+
+4. **Invariant composition:** Do invariants 1-7 together form a *complete* axiom set, or are there model properties that require additional invariants? (Likely incomplete — control flow ordering, temporal sequencing, and concurrency are not yet addressed.)
+
+5. **Ennead stability:** Is the Ennead truly closed? What's the process for proposing a 10th archetype? Criteria: (a) cannot be expressed as a combination of existing archetypes, (b) answers a question none of the 9 answer, (c) has at least 3 edge types that map to it. Current candidate that might force expansion: **temporal/ordering** (happens-before, precedes, triggers-after) — currently absorbed into flow_out but arguably distinct.
+
+6. **Level C testing:** Role equivalence requires comparing incoming edges, which means you need the *enclosing system* to be analyzed in both languages. Is this feasible for testing? Or should Level C remain a theoretical construct until multi-repo analysis exists?
