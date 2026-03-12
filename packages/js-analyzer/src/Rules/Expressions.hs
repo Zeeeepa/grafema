@@ -89,9 +89,16 @@ ruleCallExpression node = do
   -- Match against library definitions (domain-specific nodes)
   matchCallSite callee nodeId node
 
-  -- Walk callee (discard result)
+  -- Walk callee and connect CALL to its callee expression
   case getChildrenMaybe "callee" node of
-    Just c  -> withAncestor node (walkNode c) >> return ()
+    Just c  -> do
+      mCalleeId <- withAncestor node (walkNode c)
+      forM_ mCalleeId $ \calleeId ->
+        emitEdge GraphEdge
+          { geSource = nodeId, geTarget = calleeId
+          , geType = "DERIVED_FROM"
+          , geMetadata = Map.singleton "kind" (MetaText "callee")
+          }
     Nothing -> return ()
 
   return (Just nodeId)
@@ -121,9 +128,16 @@ ruleMemberExpression node = do
     , gnMetadata = Map.singleton "computed" (MetaBool computed)
     }
 
-  -- Walk object (discard result)
+  -- Walk object and connect PROPERTY_ACCESS to receiver
   case getChildrenMaybe "object" node of
-    Just obj -> withAncestor node (walkNode obj) >> return ()
+    Just obj -> do
+      mObjId <- withAncestor node (walkNode obj)
+      forM_ mObjId $ \objId ->
+        emitEdge GraphEdge
+          { geSource = nodeId, geTarget = objId
+          , geType = "READS_FROM"
+          , geMetadata = Map.singleton "kind" (MetaText "receiver")
+          }
     Nothing  -> return ()
   -- Walk computed property (discard result)
   case getChildrenMaybe "property" node of
@@ -189,7 +203,20 @@ ruleArrowFunction node = do
 
   withEnclosingFn nodeId $ withNamedParent ("<" <> kind <> ">") $ withScope FunctionScope nodeId $ do
     let walkBody = case getChildrenMaybe "body" node of
-          Just body -> withAncestor node (walkNode body) >> return ()
+          Just body -> case body of
+            BlockStatementNode _ _ ->
+              -- Block body: return statements handled by ruleReturnStatement
+              withAncestor node (walkNode body) >> return ()
+            _ | isArrow -> do
+              -- Expression body: implicit return for arrow functions
+              mBodyId <- withAncestor node (walkNode body)
+              forM_ mBodyId $ \bodyId ->
+                emitEdge GraphEdge
+                  { geSource = nodeId, geTarget = bodyId
+                  , geType = "RETURNS", geMetadata = Map.empty
+                  }
+            _ ->
+              withAncestor node (walkNode body) >> return ()
           Nothing   -> return ()
     declareArrowParams file ("<" <> kind <> ">") nodeId node params walkBody
 
@@ -683,14 +710,32 @@ ruleTaggedTemplateExpression node = do
     , gnMetadata = Map.singleton "kind" (MetaText "tagged_template")
     }
 
-  -- Walk tag
-  case getChildrenMaybe "tag" node of
-    Just tag -> withAncestor node (walkNode tag) >> return ()
-    Nothing  -> return ()
+  -- Emit deferred ref for call resolution (same as ruleCallExpression)
+  curScopeId <- askScopeId
+  emitDeferred DeferredRef
+    { drKind = CallResolve, drName = tagName
+    , drFromNodeId = nodeId, drEdgeType = "CALLS"
+    , drScopeId = Just curScopeId, drSource = Nothing
+    , drFile = file, drLine = spanStart sp, drColumn = 0
+    , drReceiver = Nothing, drMetadata = Map.empty
+    }
 
-  -- Walk quasi (template literal)
+  -- Extract template expressions and emit PASSES_ARGUMENT
+  -- Tagged templates: tag(strings, ...expressions)
+  -- strings is implicit (index 0), expressions start at index 1
   case getChildrenMaybe "quasi" node of
     Just quasi -> do
+      let exprs = getChildren "expressions" quasi
+      mapM_ (\(idx, expr) -> do
+        mExprId <- withAncestor node (walkNode expr)
+        forM_ mExprId $ \exprId ->
+          emitEdge GraphEdge
+            { geSource = nodeId, geTarget = exprId
+            , geType = "PASSES_ARGUMENT"
+            , geMetadata = Map.singleton "index" (MetaInt (idx + 1))
+            }
+        ) (zip [0..] exprs)
+      -- Walk quasi itself for DERIVED_FROM
       mQuasiId <- withAncestor node (walkNode quasi)
       forM_ mQuasiId $ \quasiId ->
         emitEdge GraphEdge
@@ -698,6 +743,18 @@ ruleTaggedTemplateExpression node = do
           , geType = "DERIVED_FROM", geMetadata = Map.empty
           }
     Nothing -> return ()
+
+  -- Walk tag and connect as callee
+  case getChildrenMaybe "tag" node of
+    Just tag -> do
+      mTagId <- withAncestor node (walkNode tag)
+      forM_ mTagId $ \tagId ->
+        emitEdge GraphEdge
+          { geSource = nodeId, geTarget = tagId
+          , geType = "DERIVED_FROM"
+          , geMetadata = Map.singleton "kind" (MetaText "callee")
+          }
+    Nothing  -> return ()
 
   return (Just nodeId)
 

@@ -53,14 +53,24 @@ ruleThrowStatement node = do
   mChildId <- case getChildrenMaybe "argument" node of
     Just arg -> withAncestor node (walkNode arg)
     Nothing  -> return Nothing
-  case encFn of
+  -- Use enclosing function, or fall back to module for top-level throws
+  let mSource = case encFn of
+        Just fnId -> Just fnId
+        Nothing   -> Nothing  -- will use scope ID below
+  case mSource of
     Just fnId ->
       forM_ mChildId $ \childId ->
         emitEdge GraphEdge
           { geSource = fnId, geTarget = childId
           , geType = "THROWS", geMetadata = Map.empty
           }
-    Nothing -> return ()
+    Nothing -> do
+      throwScopeId <- askScopeId
+      forM_ mChildId $ \childId ->
+        emitEdge GraphEdge
+          { geSource = throwScopeId, geTarget = childId
+          , geType = "THROWS", geMetadata = Map.empty
+          }
   return Nothing
 
 -- ── If Statement ────────────────────────────────────────────────────────
@@ -237,15 +247,16 @@ ruleForInOfStatement node = do
       { geSource = loopId, geTarget = bodyScopeId
       , geType = "HAS_BODY", geMetadata = Map.empty
       }
-    case getChildrenMaybe "left" node of
-      Just left -> withAncestor node (walkNode left) >> return ()
-      Nothing   -> return ()
-    case getChildrenMaybe "right" node of
-      Just right -> do
-        mRightId <- withAncestor node (walkNode right)
-        forM_ mRightId $ \rightId ->
-          emitEdge GraphEdge { geSource = loopId, geTarget = rightId, geType = "ITERATES_OVER", geMetadata = Map.empty }
-      Nothing -> return ()
+    mLeftId <- case getChildrenMaybe "left" node of
+      Just left -> withAncestor node (walkNode left)
+      Nothing   -> return Nothing
+    mRightId <- case getChildrenMaybe "right" node of
+      Just right -> withAncestor node (walkNode right)
+      Nothing    -> return Nothing
+    forM_ mRightId $ \rightId -> do
+      emitEdge GraphEdge { geSource = loopId, geTarget = rightId, geType = "ITERATES_OVER", geMetadata = Map.empty }
+      forM_ mLeftId $ \leftId ->
+        emitEdge GraphEdge { geSource = leftId, geTarget = rightId, geType = "ITERATES_OVER", geMetadata = Map.empty }
     case getChildrenMaybe "body" node of
       Just body -> do
         mBodyId <- withAncestor node (walkNode body)

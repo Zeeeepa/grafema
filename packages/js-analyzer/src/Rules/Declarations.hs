@@ -70,47 +70,176 @@ ruleVariableDeclarator node parentDecl = do
   curScopeId <- askScopeId
   let kind = getTextFieldOr "kind" "let" parentDecl
       nodeType = if kind == "const" then "CONSTANT" else "VARIABLE"
+      dk = case kind of
+        "var"   -> DeclVar
+        "let"   -> DeclLet
+        "const" -> DeclConst
+        _       -> DeclLet
 
   -- Extract binding name from id field
   case getChildrenMaybe "id" node of
-    Just idNode -> do
-      let name = getTextFieldOr "name" "<anonymous>" idNode
-          idSp = astNodeSpan idNode
-      parent <- askNamedParent
-      isExported <- askExported
-      let nodeId = semanticId file nodeType name parent Nothing
+    Just idNode -> case idNode of
+      -- Destructuring patterns: create individual nodes for each binding
+      ObjectPatternNode _ _ -> handleDestructuringDecl idNode node parentDecl nodeType kind dk
+      ArrayPatternNode _ _  -> handleDestructuringDecl idNode node parentDecl nodeType kind dk
+      -- Normal identifier binding: existing logic
+      _ -> do
+        let name = getTextFieldOr "name" "<anonymous>" idNode
+            idSp = astNodeSpan idNode
+        parent <- askNamedParent
+        isExported <- askExported
+        let nodeId = semanticId file nodeType name parent Nothing
+        emitNode GraphNode
+          { gnId       = nodeId
+          , gnType     = nodeType
+          , gnName     = name
+          , gnFile     = file
+          , gnLine     = spanStart idSp  -- byte offset for now, orchestrator converts
+          , gnColumn   = 0
+          , gnEndLine  = spanEnd idSp
+          , gnEndColumn = 0
+          , gnExported = isExported
+          , gnMetadata = Map.singleton "kind" (MetaText kind)
+          }
+        emitEdge GraphEdge
+          { geSource = curScopeId
+          , geTarget = nodeId
+          , geType   = "DECLARES"
+          , geMetadata = Map.empty
+          }
+        -- If there's an initializer, walk it and emit ASSIGNED_FROM
+        case getChildrenMaybe "init" node of
+          Just initNode -> do
+            mChildId <- withAncestor node (walkNode initNode)
+            forM_ mChildId $ \childId ->
+              emitEdge GraphEdge
+                { geSource = nodeId
+                , geTarget = childId
+                , geType = "ASSIGNED_FROM"
+                , geMetadata = Map.empty
+                }
+          Nothing -> return ()
+        return (Just nodeId)
+    Nothing -> return Nothing
+
+-- ── Destructuring Helpers ──────────────────────────────────────────────
+
+-- | Extract all binding info from a destructuring pattern.
+-- Returns (name, identifierNode, maybeDefaultExprNode) triples.
+-- The default expression node is present for AssignmentPattern bindings.
+extractBindingInfo :: ASTNode -> [(Text, ASTNode, Maybe ASTNode)]
+extractBindingInfo node = case node of
+  IdentifierNode _ _ ->
+    let name = getTextFieldOr "name" "" node
+    in if T.null name then [] else [(name, node, Nothing)]
+  ObjectPatternNode _ _ ->
+    concatMap extractFromProperty (getChildren "properties" node)
+  ArrayPatternNode _ _ ->
+    concatMap extractBindingInfo (getChildren "elements" node)
+  AssignmentPatternNode _ _ ->
+    -- `{ a = defaultExpr }` or `[a = defaultExpr]`
+    let mDefault = getChildrenMaybe "right" node
+        leftBindings = case getChildrenMaybe "left" node of
+          Just left -> extractBindingInfo left
+          Nothing   -> []
+    in map (\(n, sp, _) -> (n, sp, mDefault)) leftBindings
+  RestElementNode _ _ ->
+    case getChildrenMaybe "argument" node of
+      Just arg -> extractBindingInfo arg
+      Nothing  -> []
+  _ -> []
+  where
+    extractFromProperty :: ASTNode -> [(Text, ASTNode, Maybe ASTNode)]
+    extractFromProperty prop = case prop of
+      PropertyNode _ _ ->
+        -- In destructuring, the binding is in the "value" field.
+        -- For `{ a }` (shorthand), value == key (both are Identifier "a").
+        -- For `{ a: b }`, key is "a", value is "b" — binding is "b".
+        case getChildrenMaybe "value" prop of
+          Just val -> extractBindingInfo val
+          Nothing  ->
+            -- Fallback to key if value is missing
+            case getChildrenMaybe "key" prop of
+              Just key -> extractBindingInfo key
+              Nothing  -> []
+      -- RestElement inside ObjectPattern: `{ ...rest }`
+      RestElementNode _ _ ->
+        case getChildrenMaybe "argument" prop of
+          Just arg -> extractBindingInfo arg
+          Nothing  -> []
+      _ -> []
+
+-- | Handle destructuring declarations (ObjectPattern / ArrayPattern).
+-- Creates individual VARIABLE/CONSTANT nodes for each binding with ASSIGNED_FROM edges.
+handleDestructuringDecl :: ASTNode -> ASTNode -> ASTNode -> Text -> Text -> DeclKind -> Analyzer (Maybe Text)
+handleDestructuringDecl patternNode declaratorNode _parentDecl nodeType kind dk = do
+  file <- askFile
+  curScopeId <- askScopeId
+  parent <- askNamedParent
+  isExported <- askExported
+
+  -- Walk the initializer expression (e.g., `obj` in `const { a } = obj`)
+  mInitId <- case getChildrenMaybe "init" declaratorNode of
+    Just initNode -> withAncestor declaratorNode (walkNode initNode)
+    Nothing       -> return Nothing
+
+  -- Extract all binding info from the pattern (including default expr nodes)
+  let bindings = extractBindingInfo patternNode
+
+  -- Emit nodes and edges for each binding, accumulating scope declarations
+  emitBindings file curScopeId parent isExported nodeType kind dk mInitId declaratorNode bindings Nothing
+  where
+    emitBindings :: Text -> Text -> Maybe Text -> Bool -> Text -> Text
+                 -> DeclKind -> Maybe Text -> ASTNode -> [(Text, ASTNode, Maybe ASTNode)] -> Maybe Text -> Analyzer (Maybe Text)
+    emitBindings _ _ _ _ _ _ _ _ _ [] firstId = return firstId
+    emitBindings file' scopeId' parent' exported' nType knd dKind mInitId declNode ((name, spanNode, mDefaultExpr):rest) firstId = do
+      let sp = astNodeSpan spanNode
+          nodeId = semanticId file' nType name parent' Nothing
       emitNode GraphNode
         { gnId       = nodeId
-        , gnType     = nodeType
+        , gnType     = nType
         , gnName     = name
-        , gnFile     = file
-        , gnLine     = spanStart idSp  -- byte offset for now, orchestrator converts
+        , gnFile     = file'
+        , gnLine     = spanStart sp
         , gnColumn   = 0
-        , gnEndLine  = spanEnd idSp
+        , gnEndLine  = spanEnd sp
         , gnEndColumn = 0
-        , gnExported = isExported
-        , gnMetadata = Map.singleton "kind" (MetaText kind)
+        , gnExported = exported'
+        , gnMetadata = Map.singleton "kind" (MetaText knd)
         }
       emitEdge GraphEdge
-        { geSource = curScopeId
+        { geSource = scopeId'
         , geTarget = nodeId
         , geType   = "DECLARES"
         , geMetadata = Map.empty
         }
-      -- If there's an initializer, walk it and emit ASSIGNED_FROM
-      case getChildrenMaybe "init" node of
-        Just initNode -> do
-          mChildId <- withAncestor node (walkNode initNode)
-          forM_ mChildId $ \childId ->
+      -- ASSIGNED_FROM edge to the initializer (all bindings point to same init)
+      forM_ mInitId $ \initId ->
+        emitEdge GraphEdge
+          { geSource = nodeId
+          , geTarget = initId
+          , geType   = "ASSIGNED_FROM"
+          , geMetadata = Map.empty
+          }
+      -- If there's a default value expression, walk it and add ASSIGNED_FROM to it too.
+      -- For `const { a = SEED } = {}`, the binding gets ASSIGNED_FROM to both {} and SEED.
+      case mDefaultExpr of
+        Just defaultExpr -> do
+          mDefaultId <- withAncestor declNode (walkNode defaultExpr)
+          forM_ mDefaultId $ \defaultId ->
             emitEdge GraphEdge
               { geSource = nodeId
-              , geTarget = childId
-              , geType = "ASSIGNED_FROM"
-              , geMetadata = Map.empty
+              , geTarget = defaultId
+              , geType   = "ASSIGNED_FROM"
+              , geMetadata = Map.singleton "source" (MetaText "default")
               }
         Nothing -> return ()
-      return (Just nodeId)
-    Nothing -> return Nothing
+      let firstId' = case firstId of
+            Nothing -> Just nodeId
+            _       -> firstId
+      -- Declare this binding in scope for subsequent bindings
+      declareInScope (Declaration nodeId dKind name) $
+        emitBindings file' scopeId' parent' exported' nType knd dKind mInitId declNode rest firstId'
 
 -- ── Function Declaration ────────────────────────────────────────────────
 
@@ -576,8 +705,29 @@ declareParams file fnName fnNodeId parentNode (p:ps) bodyAction = do
     { geSource = curScopeId, geTarget = pId
     , geType = "DECLARES", geMetadata = Map.empty
     }
-  -- Walk param for defaults, destructuring, type annotations
-  withAncestor parentNode (walkNode p) >> return ()
+  -- Walk param for defaults, destructuring, type annotations.
+  -- For AssignmentPattern params (default values), walk the default expression
+  -- and create ASSIGNED_FROM from the PARAMETER to the default value.
+  case p of
+    AssignmentPatternNode _ _ -> do
+      -- Walk default value (right side) and connect to parameter
+      case getChildrenMaybe "right" p of
+        Just defaultExpr -> do
+          mDefaultId <- withAncestor parentNode (walkNode defaultExpr)
+          forM_ mDefaultId $ \defaultId ->
+            emitEdge GraphEdge
+              { geSource = pId, geTarget = defaultId
+              , geType = "ASSIGNED_FROM"
+              , geMetadata = Map.singleton "source" (MetaText "default")
+              }
+        Nothing -> return ()
+      -- Walk left side for type annotations (but NOT as a reference)
+      case getChildrenMaybe "left" p of
+        Just left -> case getChildrenMaybe "typeAnnotation" left of
+          Just ta -> withAncestor parentNode (walkNode ta) >> return ()
+          Nothing -> return ()
+        Nothing -> return ()
+    _ -> withAncestor parentNode (walkNode p) >> return ()
   declareInScope (Declaration pId DeclParam pName) $
     declareParams file fnName fnNodeId parentNode ps bodyAction
 

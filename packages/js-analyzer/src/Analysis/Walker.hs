@@ -115,7 +115,12 @@ walkNode node = case node of
   CatchClauseNode _ _         -> ruleCatchClause node
   BreakStatementNode _ _      -> return Nothing
   ContinueStatementNode _ _   -> return Nothing
-  LabeledStatementNode _ _    -> walkChildren' node >> return Nothing
+  LabeledStatementNode _ _    -> do
+    -- body is a single Statement, not array — walkChildren' misses it via getChildren
+    case getChildrenMaybe "body" node of
+      Just body -> withAncestor node (walkNode body) >> return ()
+      Nothing   -> return ()
+    return Nothing
   WithStatementNode _ _       -> walkChildren' node >> return Nothing
   EmptyStatementNode _ _      -> return Nothing
   DebuggerStatementNode _ _   -> return Nothing
